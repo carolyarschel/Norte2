@@ -1,0 +1,29 @@
+import { Pool } from "pg";
+import { env } from "./env";
+
+export const pool = new Pool({
+  host:     env.DB_HOST,
+  port:     env.DB_PORT,
+  database: env.DB_NAME,
+  user:     env.DB_USER,
+  password: env.DB_PASSWORD,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
+
+pool.on("error", (err) => {
+  console.error("❌ Unexpected database error:", err);
+});
+
+/** Convenience: run a query and return rows */
+export async function query<T = any>(text: string, params?: any[]): Promise<T[]> {
+  const result = await pool.query(text, params);
+  return result.rows as T[];
+}
+
+/** Convenience: run a query and return first row or null */
+export async function queryOne<T = any>(text: string, params?: any[]): Promise<T | null> {
+  const rows = await query<T>(text, params);
+  return rows[0] ?? null;
+}

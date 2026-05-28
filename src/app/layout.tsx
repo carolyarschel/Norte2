@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { StoreProvider } from "@/components/StoreProvider"; // <- adiciona
 
 export const metadata: Metadata = {
   title: "Alloc Platform",
@@ -11,10 +12,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR">
       <body>
-        <div className="app-shell">
-          <Sidebar />
-          <main className="main-content">{children}</main>
-        </div>
+        <StoreProvider> {/* <- envolve tudo */}
+          <div className="app-shell">
+            <Sidebar />
+            <main className="main-content">{children}</main>
+          </div>
+        </StoreProvider>
       </body>
     </html>
   );

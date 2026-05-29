@@ -4,6 +4,23 @@ import { create } from "zustand";
 import type { Consultant, Project } from "@/types";
 import { api } from "@/lib/api";
 
+export interface ProposedAllocation {
+  consultantId: number;
+  consultantName: string;
+  weekday: number;
+  role: string;
+  slotType: "level" | "pinned";
+  slotDescription: string;
+}
+
+export interface SimulationResult {
+  feasible: boolean;
+  issues: string[];
+  suggestions: string[];
+  proposed: ProposedAllocation[];
+  earliestFeasibleDate: string | null;
+}
+
 interface AppState {
   companyName: string;
   consultants: Consultant[];
@@ -21,6 +38,12 @@ interface AppState {
   updateProject: (id: number, data: Partial<Project>) => Promise<void>;
   removeProject: (id: number) => Promise<void>;
   setProjectStatus: (id: number, status: Project["status"]) => Promise<void>;
+
+  /** Batch simulate multiple projects together (order matters). */
+  runSimulationBatch: (projectIds: number[], randomize?: boolean) => Promise<Record<number, SimulationResult>>;
+
+  confirmAndAllocate: (projectId: number, allocations: { consultantId: number; weekday: number; role: string }[]) => Promise<void>;
+  clearAllocations: (projectId: number) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>()((set) => ({
@@ -31,14 +54,18 @@ export const useAppStore = create<AppState>()((set) => ({
 
   setCompanyName: (name) => set({ companyName: name }),
 
-  // Carrega tudo do banco na inicialização
   fetchAll: async () => {
     set({ loading: true });
-    const [consultants, projects] = await Promise.all([
-      api.consultants.list(),
-      api.projects.list(),
-    ]);
-    set({ consultants, projects, loading: false });
+    try {
+      const [consultants, projects] = await Promise.all([
+        api.consultants.list(),
+        api.projects.list(),
+      ]);
+      set({ consultants, projects, loading: false });
+    } catch (err) {
+      console.error("Failed to fetch data:", err);
+      set({ loading: false });
+    }
   },
 
   addConsultant: async (c) => {
@@ -47,15 +74,11 @@ export const useAppStore = create<AppState>()((set) => ({
   },
   updateConsultant: async (id, data) => {
     const updated = await api.consultants.update(id, data);
-    set((s) => ({
-      consultants: s.consultants.map((c) => (c.id === id ? updated : c)),
-    }));
+    set((s) => ({ consultants: s.consultants.map((c) => (c.id === id ? updated : c)) }));
   },
   removeConsultant: async (id) => {
     await api.consultants.remove(id);
-    set((s) => ({
-      consultants: s.consultants.filter((c) => c.id !== id),
-    }));
+    set((s) => ({ consultants: s.consultants.filter((c) => c.id !== id) }));
   },
 
   addProject: async (p) => {
@@ -64,9 +87,7 @@ export const useAppStore = create<AppState>()((set) => ({
   },
   updateProject: async (id, data) => {
     const updated = await api.projects.update(id, data);
-    set((s) => ({
-      projects: s.projects.map((p) => (p.id === id ? updated : p)),
-    }));
+    set((s) => ({ projects: s.projects.map((p) => (p.id === id ? updated : p)) }));
   },
   removeProject: async (id) => {
     await api.projects.remove(id);
@@ -74,8 +95,23 @@ export const useAppStore = create<AppState>()((set) => ({
   },
   setProjectStatus: async (id, status) => {
     const updated = await api.projects.update(id, { status });
+    set((s) => ({ projects: s.projects.map((p) => (p.id === id ? updated : p)) }));
+  },
+
+  runSimulationBatch: async (projectIds, randomize = false) => {
+    return api.simulation.run(projectIds, randomize);
+  },
+
+  confirmAndAllocate: async (projectId, allocations) => {
+    await api.projects.setAllocations(projectId, allocations);
+    const confirmed = await api.projects.update(projectId, { status: "confirmed" });
     set((s) => ({
-      projects: s.projects.map((p) => (p.id === id ? updated : p)),
+      projects: s.projects.map((p) => (p.id === projectId ? confirmed : p)),
     }));
+  },
+
+  clearAllocations: async (projectId) => {
+    const updated = await api.projects.clearAllocations(projectId);
+    set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? updated : p)) }));
   },
 }));

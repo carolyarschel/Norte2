@@ -47,6 +47,7 @@ export interface Project {
   // Resolved allocation (filled manually or by simulation)
   visitDays: Weekday[];           // union of all days actually used
   allocatedConsultants: number[]; // resolved consultant IDs
+  allocations?: { id: number; consultantId: number; weekday: number; role: string }[];
 }
 
 // ─── Derived / simulation types ───────────────────────────────────────────────

@@ -8,6 +8,7 @@ import {
   DAY_NAMES, CADENCE_LABELS, LEVEL_LABELS,
 } from "@/lib/domain";
 import { StatusBadge, LevelTag, Avatar } from "@/components/ui";
+import { LuCalendar } from "react-icons/lu";
 
 type Tab = "feasibility" | "matrix" | "capacity" | "scheduler";
 
@@ -161,7 +162,7 @@ export default function SimulationPage() {
 
       <div className="page-content">
         <div className="tabs">
-          {([[["feasibility", "Viabilidade"], ["matrix", "Matriz de Conflitos"], ["capacity", "Capacidade"], ["scheduler", "📅 Agendamento"]]] as [Tab, string][]).map(([v, l]) => (
+          {([["feasibility", "Viabilidade"], ["matrix", "Matriz de Conflitos"], ["capacity", "Capacidade"], ["scheduler", "Agendamento"]] as [Tab, string][]).map(([v, l]) => (
             <button key={v} className={`tab-btn ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}>{l}</button>
           ))}
         </div>
@@ -201,7 +202,7 @@ export default function SimulationPage() {
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <input type="checkbox" checked={isSelected} disabled={isApplied} onChange={() => {}} style={{ accentColor: "var(--red)", width: 16, height: 16 }} />
+                          <input type="checkbox" checked={isSelected} disabled={isApplied} onChange={() => { }} style={{ accentColor: "var(--red)", width: 16, height: 16 }} />
                           <div>
                             <span style={{ fontFamily: "var(--font-hd)", fontWeight: 800, color: "var(--red)", marginRight: 8, fontSize: 15 }}>{p.acronym}</span>
                             <span style={{ fontWeight: 600, fontSize: 13 }}>{p.client}</span>
@@ -424,8 +425,8 @@ export default function SimulationPage() {
                   <tr key={a.id}><td><strong style={{ color: "var(--red)" }}>{a.acronym}</strong> {a.client}</td>
                     {matrixProjects.map((b) => {
                       const lv = conflictLevel(a.id, b.id);
-                      if (lv === "self")   return <td key={b.id} className="c-self">—</td>;
-                      if (lv === "high")   return <td key={b.id} className="c-high">⚠ Alto</td>;
+                      if (lv === "self") return <td key={b.id} className="c-self">—</td>;
+                      if (lv === "high") return <td key={b.id} className="c-high">⚠ Alto</td>;
                       if (lv === "medium") return <td key={b.id} className="c-medium">△ Médio</td>;
                       return <td key={b.id} className="c-ok">✓ OK</td>;
                     })}

@@ -347,7 +347,7 @@ export function SchedulerTab() {
           <div style={{ fontWeight: 600, marginBottom: 4 }}>Como a prioridade é calculada:</div>
           <div>🟠 <strong>Status:</strong> hot (+20) &gt; cold (+10)</div>
           <div>🔵 <strong>Escassez:</strong> menos consultores elegíveis = maior prioridade</div>
-          <div style={{ marginTop: 4 }}>Projetos são simulados na ordem de prioridade. Allocações do #1 viram restrição para o #2, e assim por diante.</div>
+          <div style={{ marginTop: 4 }}>Projetos são simulados na ordem de prioridade. Alocações do #1 viram restrição para o #2, e assim por diante.</div>
         </div>
       </div>
 

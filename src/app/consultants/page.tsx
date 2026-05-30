@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { computeLoad, DAY_NAMES, LEVEL_LABELS } from "@/lib/domain";
 import { Avatar, LevelTag, CapBar, ChipGroup } from "@/components/ui";
 import type { Consultant, Weekday } from "@/types";
+import cuid from 'cuid';
 
 type FormState = Omit<Consultant, "id">;
 
@@ -77,9 +78,7 @@ export default function ConsultantsPage() {
                       <span>Restrição: {c.restrictions.map((d) => DAY_NAMES[d]).join(", ")} · </span>
                     )}
                     {cProjects.length > 0
-                      ? cProjects.map((p) => (
-                          <strong key={p.id} style={{ marginRight: 4 }}>{p.acronym}</strong>
-                        ))
+                      ? <strong key={cuid()} style={{ marginRight: 4 }}>{cProjects.map(p => p.acronym).join(', ')}</strong>
                       : "Sem alocação"}
                   </div>
                 </div>

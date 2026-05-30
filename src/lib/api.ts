@@ -58,11 +58,17 @@ export const api = {
   },
 
   simulation: {
-    /**
-     * Batch simulate 1+ projects together. Order matters: the first project's
-     * proposed allocations become constraints for the second, and so on.
-     */
     run: (projectIds: number[], randomize = false) =>
       post(`${BASE}/simulation`, { projectIds, randomize }),
+  },
+
+  // ── Scheduling ─────────────────────────────────────────────────────────────
+  scheduling: {
+    /**
+     * Score, prioritize, and suggest start dates for a set of hot/cold projects.
+     * Returns an ordered array of ScheduleEntry (highest priority first).
+     */
+    run: (projectIds: number[]) =>
+      post(`${BASE}/scheduling`, { projectIds }),
   },
 };

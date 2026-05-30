@@ -21,6 +21,25 @@ export interface SimulationResult {
   earliestFeasibleDate: string | null;
 }
 
+// ── Scheduling ────────────────────────────────────────────────────────────────
+
+export interface ScheduleEntry {
+  projectId: number;
+  priority: number;
+  score: number;
+  scoreBreakdown: { status: number; scarcity: number };
+  suggestedStartDate: string | null;
+  originalStartDate: string;
+  weeksDelayed: number;
+  canBeScheduled: boolean;
+  issues: string[];
+  suggestions: string[];
+  proposed: ProposedAllocation[];
+  scarcityReason: string;
+}
+
+// ── Store interface ───────────────────────────────────────────────────────────
+
 interface AppState {
   companyName: string;
   consultants: Consultant[];
@@ -44,7 +63,15 @@ interface AppState {
 
   confirmAndAllocate: (projectId: number, allocations: { consultantId: number; weekday: number; role: string }[]) => Promise<void>;
   clearAllocations: (projectId: number) => Promise<void>;
+
+  /**
+   * Score, prioritize, and suggest start dates for a set of hot/cold projects.
+   * Confirmed projects are ignored (they're already fixed).
+   */
+  scheduleProjects: (projectIds: number[]) => Promise<ScheduleEntry[]>;
 }
+
+// ── Store ─────────────────────────────────────────────────────────────────────
 
 export const useAppStore = create<AppState>()((set) => ({
   companyName: "Minha Consultoria",
@@ -113,5 +140,9 @@ export const useAppStore = create<AppState>()((set) => ({
   clearAllocations: async (projectId) => {
     const updated = await api.projects.clearAllocations(projectId);
     set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? updated : p)) }));
+  },
+
+  scheduleProjects: async (projectIds) => {
+    return api.scheduling.run(projectIds);
   },
 }));

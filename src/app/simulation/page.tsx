@@ -1,5 +1,6 @@
 "use client";
 
+import { SchedulerTab } from "@/components/simulation/SchedulerTab";
 import { useState, useCallback } from "react";
 import { useAppStore, SimulationResult, ProposedAllocation } from "@/store/useAppStore";
 import {
@@ -8,7 +9,7 @@ import {
 } from "@/lib/domain";
 import { StatusBadge, LevelTag, Avatar } from "@/components/ui";
 
-type Tab = "feasibility" | "matrix" | "capacity";
+type Tab = "feasibility" | "matrix" | "capacity" | "scheduler";
 
 export default function SimulationPage() {
   const { consultants, projects, runSimulationBatch, confirmAndAllocate, fetchAll } = useAppStore();
@@ -160,7 +161,7 @@ export default function SimulationPage() {
 
       <div className="page-content">
         <div className="tabs">
-          {([["feasibility", "Viabilidade"], ["matrix", "Matriz de Conflitos"], ["capacity", "Capacidade"]] as [Tab, string][]).map(([v, l]) => (
+          {([[["feasibility", "Viabilidade"], ["matrix", "Matriz de Conflitos"], ["capacity", "Capacidade"], ["scheduler", "📅 Agendamento"]]] as [Tab, string][]).map(([v, l]) => (
             <button key={v} className={`tab-btn ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}>{l}</button>
           ))}
         </div>
@@ -470,6 +471,7 @@ export default function SimulationPage() {
             })}
           </div>
         )}
+        {tab === "scheduler" && <SchedulerTab />}
       </div>
     </>
   );

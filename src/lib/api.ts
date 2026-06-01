@@ -58,8 +58,11 @@ export const api = {
   },
 
   simulation: {
-    run: (projectIds: number[], randomize = false) =>
-      post(`${BASE}/simulation`, { projectIds, randomize }),
+    run: (
+      projectIds: number[],
+      randomize = false,
+      extraCommitted: { consultantId: number; weekday: number; cadence: string; startDate: string; endDate: string; projectId: number }[] = [],
+    ) => post(`${BASE}/simulation`, { projectIds, randomize, extraCommitted }),
   },
 
   // ── Scheduling ─────────────────────────────────────────────────────────────

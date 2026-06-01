@@ -11,6 +11,7 @@ export interface ProposedAllocation {
   role: string;
   slotType: "level" | "pinned";
   slotDescription: string;
+  cadence?: string;
 }
 
 export interface SimulationResult {
@@ -41,12 +42,10 @@ export interface ScheduleEntry {
 // ── Store interface ───────────────────────────────────────────────────────────
 
 interface AppState {
-  companyName: string;
   consultants: Consultant[];
   projects: Project[];
   loading: boolean;
 
-  setCompanyName: (name: string) => void;
   fetchAll: () => Promise<void>;
 
   addConsultant: (c: Omit<Consultant, "id">) => Promise<void>;
@@ -57,9 +56,14 @@ interface AppState {
   updateProject: (id: number, data: Partial<Project>) => Promise<void>;
   removeProject: (id: number) => Promise<void>;
   setProjectStatus: (id: number, status: Project["status"]) => Promise<void>;
+  setProjectLeader: (id: number, leaderId: number | null) => Promise<void>;
 
   /** Batch simulate multiple projects together (order matters). */
-  runSimulationBatch: (projectIds: number[], randomize?: boolean) => Promise<Record<number, SimulationResult>>;
+  runSimulationBatch: (
+    projectIds: number[],
+    randomize?: boolean,
+    extraCommitted?: { consultantId: number; weekday: number; cadence: string; startDate: string; endDate: string; projectId: number }[],
+  ) => Promise<Record<number, SimulationResult>>;
 
   confirmAndAllocate: (projectId: number, allocations: { consultantId: number; weekday: number; role: string }[]) => Promise<void>;
   clearAllocations: (projectId: number) => Promise<void>;
@@ -74,12 +78,9 @@ interface AppState {
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 export const useAppStore = create<AppState>()((set) => ({
-  companyName: "Minha Consultoria",
   consultants: [],
   projects: [],
   loading: false,
-
-  setCompanyName: (name) => set({ companyName: name }),
 
   fetchAll: async () => {
     set({ loading: true });
@@ -125,8 +126,13 @@ export const useAppStore = create<AppState>()((set) => ({
     set((s) => ({ projects: s.projects.map((p) => (p.id === id ? updated : p)) }));
   },
 
-  runSimulationBatch: async (projectIds, randomize = false) => {
-    return api.simulation.run(projectIds, randomize);
+  setProjectLeader: async (id, leaderId) => {
+    const updated = await api.projects.update(id, { leaderId });
+    set((s) => ({ projects: s.projects.map((p) => (p.id === id ? updated : p)) }));
+  },
+
+  runSimulationBatch: async (projectIds, randomize = false, extraCommitted = []) => {
+    return api.simulation.run(projectIds, randomize, extraCommitted);
   },
 
   confirmAndAllocate: async (projectId, allocations) => {

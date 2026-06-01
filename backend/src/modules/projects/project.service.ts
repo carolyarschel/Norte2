@@ -1,5 +1,13 @@
 import { projectRepo, ProjectRow, LevelSlotRow, PinnedSlotRow, AllocationRow } from "./project.repository";
-import { NotFoundError } from "../../lib/errors";
+import { consultantRepo } from "../consultants/consultant.repository";
+import { simulationService } from "../simulation/simulation.service";
+import { NotFoundError, ConflictError } from "../../lib/errors";
+
+function toDateStr(d: any): string {
+  if (!d) return "";
+  if (d instanceof Date) return d.toISOString().split("T")[0];
+  return String(d).slice(0, 10);
+}
 
 function projectToDTO(
   row: ProjectRow,
@@ -12,10 +20,11 @@ function projectToDTO(
     acronym:   row.acronym,
     client:    row.client,
     status:    row.status,
-    startDate: row.start_date,
-    endDate:   row.end_date,
+    startDate: toDateStr(row.start_date),
+    endDate:   toDateStr(row.end_date),
     cadence:   row.cadence,
     visitDays: row.visit_days,
+    leaderId:  row.leader_consultant_id ?? null,
     levelSlots: levelSlots.map((s) => ({
       id:                    s.id,
       level:                 s.level,
@@ -31,6 +40,7 @@ function projectToDTO(
       daysPerWeek:  s.days_per_week,
       visitDays:    s.visit_days,
       assignedDays: s.assigned_days,
+      cadence:      s.cadence ?? null,
     })),
     allocations: allocations.map((a) => ({
       id:           a.id,
@@ -40,6 +50,56 @@ function projectToDTO(
     })),
     allocatedConsultants: [...new Set(allocations.map((a) => a.consultant_id))],
   };
+}
+
+/**
+ * Run simulation for a project and merge the proposed allocations with any
+ * existing ones (e.g. from pinned slots already allocated).
+ * Safe to call even when all slots are already filled — simulation returns
+ * an empty proposed list and nothing changes.
+ */
+async function autoSimulateAndAllocate(projectId: number, cadence: string) {
+  const simResults = await simulationService.simulateBatch([projectId]);
+  const result = simResults[projectId];
+  if (!result?.proposed.length) return;
+
+  const existingAllocs = await projectRepo.getAllocations(projectId);
+
+  // Merge: existing allocations + newly proposed (deduplicated by consultant+weekday)
+  const merged = new Map<string, { consultant_id: number; weekday: number; role: string }>();
+  for (const a of existingAllocs) {
+    merged.set(`${a.consultant_id}-${a.weekday}`, { consultant_id: a.consultant_id, weekday: a.weekday, role: a.role });
+  }
+  for (const p of result.proposed) {
+    merged.set(`${p.consultantId}-${p.weekday}`, { consultant_id: p.consultantId, weekday: p.weekday, role: p.role });
+  }
+
+  if (merged.size > 0) {
+    await projectRepo.setAllocations(projectId, Array.from(merged.values()), cadence);
+  }
+}
+
+/** Create allocation records for any pinned slot that has explicit visit days. */
+async function autoAllocatePinnedSlots(
+  projectId: number,
+  pinnedSlots: { consultantId: number; daysPerWeek: number; visitDays: number[] }[],
+  cadence: string,
+) {
+  const withDays = pinnedSlots.filter((s) => s.visitDays.length > 0);
+  if (!withDays.length) return;
+
+  const dbAllocations: { consultant_id: number; weekday: number; role: string }[] = [];
+  for (const slot of withDays) {
+    const consultant = await consultantRepo.findById(slot.consultantId);
+    const role = consultant?.is_leader ? "líder" : "consultor";
+    for (const day of slot.visitDays.slice(0, slot.daysPerWeek)) {
+      dbAllocations.push({ consultant_id: slot.consultantId, weekday: day, role });
+    }
+  }
+
+  if (dbAllocations.length > 0) {
+    await projectRepo.setAllocations(projectId, dbAllocations, cadence);
+  }
 }
 
 async function getFullProject(id: number) {
@@ -57,18 +117,16 @@ async function getFullProject(id: number) {
 
 export const projectService = {
   async getAll() {
-    const rows = await projectRepo.findAll();
-    const results = await Promise.all(
-      rows.map(async (row) => {
-        const [ls, ps, al] = await Promise.all([
-          projectRepo.getLevelSlots(row.id),
-          projectRepo.getPinnedSlots(row.id),
-          projectRepo.getAllocations(row.id),
-        ]);
-        return projectToDTO(row, ls, ps, al);
-      })
+    const { projects, levelSlots, pinnedSlots, allocations } =
+      await projectRepo.findAllWithRelations();
+    return projects.map((row) =>
+      projectToDTO(
+        row,
+        levelSlots.filter((s) => s.project_id === row.id),
+        pinnedSlots.filter((s) => s.project_id === row.id),
+        allocations.filter((a) => a.project_id === row.id),
+      )
     );
-    return results;
   },
 
   async getById(id: number) {
@@ -79,8 +137,11 @@ export const projectService = {
     acronym: string; client: string; status?: string;
     startDate: string; endDate: string; cadence?: string;
     levelSlots?: { level: string; isLeader: boolean; daysPerWeek: number; visitDays: number[] }[];
-    pinnedSlots?: { consultantId: number; daysPerWeek: number; visitDays: number[] }[];
+    pinnedSlots?: { consultantId: number; daysPerWeek: number; visitDays: number[]; cadence?: string | null }[];
   }) {
+    const existing = await projectRepo.findByAcronymAndClient(data.acronym, data.client);
+    if (existing) throw new ConflictError(`Projeto ${data.acronym} já existe para o cliente ${data.client}`);
+
     const row = await projectRepo.create({
       acronym:    data.acronym,
       client:     data.client,
@@ -91,23 +152,45 @@ export const projectService = {
       visit_days: [],
     });
 
-    // Insert level slots
-    for (const slot of (data.levelSlots ?? [])) {
-      await projectRepo.addLevelSlot(row.id, {
-        level:         slot.level,
-        is_leader:     slot.isLeader,
-        days_per_week: slot.daysPerWeek,
-        visit_days:    slot.visitDays,
-      });
-    }
+    try {
+      // Insert level slots
+      for (const slot of (data.levelSlots ?? [])) {
+        await projectRepo.addLevelSlot(row.id, {
+          level:         slot.level,
+          is_leader:     slot.isLeader,
+          days_per_week: slot.daysPerWeek,
+          visit_days:    slot.visitDays,
+        });
+      }
 
-    // Insert pinned slots
-    for (const slot of (data.pinnedSlots ?? [])) {
-      await projectRepo.addPinnedSlot(row.id, {
-        consultant_id: slot.consultantId,
-        days_per_week: slot.daysPerWeek,
-        visit_days:    slot.visitDays,
-      });
+      // Insert pinned slots
+      for (const slot of (data.pinnedSlots ?? [])) {
+        await projectRepo.addPinnedSlot(row.id, {
+          consultant_id: slot.consultantId,
+          days_per_week: slot.daysPerWeek,
+          visit_days:    slot.visitDays,
+          cadence:       slot.cadence ?? null,
+        });
+      }
+
+      // Best-effort: allocation conflicts don't block project creation
+      try {
+        await autoAllocatePinnedSlots(row.id, data.pinnedSlots ?? [], data.cadence ?? "weekly");
+      } catch (err: any) {
+        console.warn(`[create] autoAllocatePinnedSlots failed for ${row.id}:`, err.message);
+      }
+
+      if ((data.status ?? "cold") === "confirmed") {
+        try {
+          await autoSimulateAndAllocate(row.id, data.cadence ?? "weekly");
+        } catch (err: any) {
+          console.warn(`[create] autoSimulateAndAllocate failed for ${row.id}:`, err.message);
+        }
+      }
+    } catch (err) {
+      // Structural failure — rollback by deleting the just-created project
+      await projectRepo.remove(row.id).catch(() => {});
+      throw err;
     }
 
     return getFullProject(row.id);
@@ -116,18 +199,61 @@ export const projectService = {
   async update(id: number, data: Partial<{
     acronym: string; client: string; status: string;
     startDate: string; endDate: string; cadence: string;
+    leaderId: number | null;
+    levelSlots: { level: string; isLeader: boolean; daysPerWeek: number; visitDays: number[] }[];
+    pinnedSlots: { consultantId: number; daysPerWeek: number; visitDays: number[]; cadence?: string | null }[];
   }>) {
     const existing = await projectRepo.findById(id);
     if (!existing) throw new NotFoundError("Projeto", id);
 
-    await projectRepo.update(id, {
+    const fields: Parameters<typeof projectRepo.updateFull>[1] = {
       acronym:    data.acronym,
       client:     data.client,
       status:     data.status,
       start_date: data.startDate,
       end_date:   data.endDate,
       cadence:    data.cadence,
-    });
+      ...("leaderId" in data ? { leader_consultant_id: data.leaderId ?? null } : {}),
+    };
+
+    const slots = (data.levelSlots !== undefined || data.pinnedSlots !== undefined)
+      ? {
+          levelSlots: (data.levelSlots ?? []).map((s) => ({
+            level:         s.level,
+            is_leader:     s.isLeader,
+            days_per_week: s.daysPerWeek,
+            visit_days:    s.visitDays,
+          })),
+          pinnedSlots: (data.pinnedSlots ?? []).map((s) => ({
+            consultant_id: s.consultantId,
+            days_per_week: s.daysPerWeek,
+            visit_days:    s.visitDays,
+            cadence:       s.cadence ?? null,
+          })),
+        }
+      : undefined;
+
+    await projectRepo.updateFull(id, fields, slots);
+
+    const project = await projectRepo.findById(id);
+    const cadence = data.cadence ?? project?.cadence ?? "weekly";
+
+    // Best-effort: allocation conflicts don't block project updates
+    if (slots) {
+      try {
+        await autoAllocatePinnedSlots(id, data.pinnedSlots ?? [], cadence);
+      } catch (err: any) {
+        console.warn(`[update] autoAllocatePinnedSlots failed for ${id}:`, err.message);
+      }
+    }
+
+    if (data.status === "confirmed") {
+      try {
+        await autoSimulateAndAllocate(id, cadence);
+      } catch (err: any) {
+        console.warn(`[update] autoSimulateAndAllocate failed for ${id}:`, err.message);
+      }
+    }
 
     return getFullProject(id);
   },

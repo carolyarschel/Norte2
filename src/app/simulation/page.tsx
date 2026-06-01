@@ -1,158 +1,262 @@
 "use client";
 
-import { SchedulerTab } from "@/components/simulation/SchedulerTab";
 import { useState, useCallback } from "react";
 import { useAppStore, SimulationResult, ProposedAllocation } from "@/store/useAppStore";
 import {
-  detectConflicts, computeLoad, getProjectColor,
+  getProjectColor, isFullyAllocated,
+  getMondayOfWeek, addDays, fmtDate, getISOWeek, jsDateToWeekday,
   DAY_NAMES, CADENCE_LABELS, LEVEL_LABELS,
 } from "@/lib/domain";
-import { StatusBadge, LevelTag, Avatar } from "@/components/ui";
-import { LuCalendar } from "react-icons/lu";
-
-type Tab = "feasibility" | "matrix" | "capacity" | "scheduler";
+import { StatusBadge, Avatar } from "@/components/ui";
 
 export default function SimulationPage() {
-  const { consultants, projects, runSimulationBatch, confirmAndAllocate, fetchAll } = useAppStore();
-  const [tab, setTab] = useState<Tab>("feasibility");
+  const { consultants, projects, runSimulationBatch, confirmAndAllocate, fetchAll, updateProject } = useAppStore();
 
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [simResults, setSimResults] = useState<Record<number, SimulationResult>>({});
   const [appliedIds, setAppliedIds] = useState<Set<number>>(new Set());
-  const [simLoading, setSimLoading] = useState(false);
+  const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
+  const [applyLoading, setApplyLoading] = useState(false);
   const [simError, setSimError] = useState<string | null>(null);
+  const [previewWeekStart, setPreviewWeekStart] = useState(() => getMondayOfWeek(new Date()));
 
   const active = projects.filter((p) => p.status !== "archived");
-  const conflicts = detectConflicts(projects);
-  const matrixProjects = active.slice(0, 6);
+  const simulatable = active.filter((p) => !(p.status === "confirmed" && isFullyAllocated(p)));
 
-  // ── Toggle selection ───────────────────────────────────────────────────────
+  // ── Batch-simulate a given list of projects together ─────────────────────
+  // Always simulate as a batch so projects at the end of the list respect the
+  // tentative allocations of projects earlier in the list.  The caller passes
+  // the exact ordered list; projects already applied are excluded upstream.
 
-  function toggleProject(id: number) {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
-
-  // ── Run batch simulation for all selected (non-applied) ────────────────────
-
-  const runAll = useCallback(async (randomize = false) => {
-    const idsToSimulate = selectedIds.filter((id) => !appliedIds.has(id));
-    if (!idsToSimulate.length) return;
-
-    setSimLoading(true);
+  const runBatch = useCallback(async (projectIds: number[], randomize = false) => {
+    if (!projectIds.length) return;
+    setLoadingIds(new Set(projectIds));
     setSimError(null);
-
     try {
-      const results = await runSimulationBatch(idsToSimulate, randomize);
+      const results = await runSimulationBatch(projectIds, randomize);
       setSimResults((prev) => ({ ...prev, ...results }));
     } catch (err: any) {
       setSimError(err.message ?? "Erro na simulação");
     } finally {
-      setSimLoading(false);
+      setLoadingIds(new Set());
     }
-  }, [selectedIds, appliedIds, runSimulationBatch]);
+  }, [runSimulationBatch]);
 
-  // ── Select a project and trigger simulation ────────────────────────────────
+  // ── Select / deselect ─────────────────────────────────────────────────────
 
   function handleSelect(id: number) {
-    const wasSelected = selectedIds.includes(id);
-    const newIds = wasSelected
-      ? selectedIds.filter((x) => x !== id)
-      : [...selectedIds, id];
-
-    setSelectedIds(newIds);
-
-    // Auto-simulate when adding (not removing)
-    if (!wasSelected) {
-      const idsToSim = newIds.filter((x) => !appliedIds.has(x));
-      if (idsToSim.length) {
-        setSimLoading(true);
-        setSimError(null);
-        runSimulationBatch(idsToSim).then((results) => {
-          setSimResults((prev) => ({ ...prev, ...results }));
-          setSimLoading(false);
-        }).catch((err) => {
-          setSimError(err.message ?? "Erro");
-          setSimLoading(false);
-        });
-      }
+    if (selectedIds.includes(id)) {
+      const newIds = selectedIds.filter((x) => x !== id);
+      setSelectedIds(newIds);
+      setSimResults((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      const toSim = newIds.filter((x) => !appliedIds.has(x));
+      if (toSim.length) runBatch(toSim);
+      return;
     }
+    const newIds = [...selectedIds, id];
+    setSelectedIds(newIds);
+    runBatch(newIds.filter((x) => !appliedIds.has(x)));
   }
 
-  // ── Apply allocations for one project ──────────────────────────────────────
+  // ── Apply one project ─────────────────────────────────────────────────────
 
   const handleApply = useCallback(async (projectId: number) => {
     const result = simResults[projectId];
     if (!result?.feasible || appliedIds.has(projectId)) return;
 
+    setApplyLoading(true);
+    setSimError(null);
     try {
-      const allocations = result.proposed.map((a) => ({
-        consultantId: a.consultantId,
-        weekday: a.weekday,
-        role: a.role,
-      }));
-      await confirmAndAllocate(projectId, allocations);
-      setAppliedIds((prev) => new Set([...prev, projectId]));
+      await confirmAndAllocate(projectId, result.proposed.map((a) => ({
+        consultantId: a.consultantId, weekday: a.weekday, role: a.role,
+      })));
+      const newApplied = new Set([...appliedIds, projectId]);
+      setAppliedIds(newApplied);
       await fetchAll();
 
-      // Re-simulate remaining unapplied projects (their constraints changed)
-      const remaining = selectedIds.filter((id) => id !== projectId && !appliedIds.has(id));
-      if (remaining.length) {
-        const results = await runSimulationBatch(remaining);
-        setSimResults((prev) => ({ ...prev, ...results }));
-      }
+      // Re-simulate remaining as batch so they respect the newly-applied allocations
+      const remaining = selectedIds.filter((id) => !newApplied.has(id));
+      if (remaining.length) runBatch(remaining);
     } catch (err: any) {
       setSimError(err.message ?? "Erro ao aplicar");
+    } finally {
+      setApplyLoading(false);
     }
-  }, [simResults, appliedIds, selectedIds, confirmAndAllocate, fetchAll, runSimulationBatch]);
+  }, [simResults, appliedIds, selectedIds, confirmAndAllocate, fetchAll, runBatch]);
 
-  // ── Build preview calendar ─────────────────────────────────────────────────
+  // ── Apply all feasible ────────────────────────────────────────────────────
 
-  function buildPreviewCalendar() {
-    type CalEntry = { projectAcronym: string; role: string; color: { bg: string; border: string; text: string }; isProposed: boolean };
-    const grid: Record<string, CalEntry[]> = {};
+  const handleApplyAll = useCallback(async () => {
+    const toApply = selectedIds.filter((id) => !appliedIds.has(id) && simResults[id]?.feasible);
+    if (!toApply.length) return;
 
-    // Existing confirmed allocations
-    for (const p of projects) {
-      if (p.status === "archived") continue;
-      const col = getProjectColor(p.id, projects);
-      for (const alloc of (p.allocations ?? [])) {
-        const key = `${alloc.consultantId}-${alloc.weekday}`;
-        if (!grid[key]) grid[key] = [];
-        grid[key].push({ projectAcronym: p.acronym, role: alloc.role, color: col, isProposed: false });
+    setApplyLoading(true);
+    setSimError(null);
+    const newlyApplied = new Set(appliedIds);
+    try {
+      for (const id of toApply) {
+        if (!simResults[id]?.feasible || newlyApplied.has(id)) continue;
+        await confirmAndAllocate(id, simResults[id].proposed.map((a) => ({
+          consultantId: a.consultantId, weekday: a.weekday, role: a.role,
+        })));
+        newlyApplied.add(id);
+      }
+      setAppliedIds(newlyApplied);
+      await fetchAll();
+    } catch (err: any) {
+      setSimError(err.message ?? "Erro ao alocar todos");
+    } finally {
+      setApplyLoading(false);
+    }
+  }, [selectedIds, appliedIds, simResults, confirmAndAllocate, fetchAll]);
+
+  // ── Nova sugestão por projeto ─────────────────────────────────────────────
+  // Strategy:
+  //   1. Try a new random allocation for just this project, treating the other
+  //      selected projects' current proposals as hard constraints (extraCommitted).
+  //   2. If that still yields an infeasible result, fall back to a full-batch
+  //      re-run (which may change other projects too).
+
+  const handleRefreshOne = useCallback(async (projectId: number) => {
+    setLoadingIds(new Set([projectId]));
+    setSimError(null);
+
+    // Build extraCommitted from the feasible proposals of every OTHER selected
+    // non-applied project so they act as hard constraints for this simulation.
+    const extraCommitted: {
+      consultantId: number; weekday: number; cadence: string;
+      startDate: string; endDate: string; projectId: number;
+    }[] = [];
+
+    for (const otherId of selectedIds) {
+      if (otherId === projectId || appliedIds.has(otherId)) continue;
+      const otherResult = simResults[otherId];
+      if (!otherResult?.feasible || !otherResult.proposed.length) continue;
+      const otherProject = projects.find((p) => p.id === otherId);
+      if (!otherProject) continue;
+      for (const alloc of otherResult.proposed) {
+        extraCommitted.push({
+          consultantId: alloc.consultantId,
+          weekday:      alloc.weekday,
+          cadence:      otherProject.cadence,
+          startDate:    otherProject.startDate,
+          endDate:      otherProject.endDate,
+          projectId:    otherId,
+        });
       }
     }
 
-    // Proposed allocations (from simulation, not yet applied)
+    try {
+      // Pass 1: simulate only this project respecting others as constraints
+      const singleResult = await runSimulationBatch([projectId], true, extraCommitted);
+
+      if (singleResult[projectId]?.feasible) {
+        // Found a solution — update only this project's result
+        setSimResults((prev) => ({ ...prev, [projectId]: singleResult[projectId] }));
+      } else {
+        // No solution even respecting others — fall back to full batch
+        const allToSim = selectedIds.filter((id) => !appliedIds.has(id));
+        setLoadingIds(new Set(allToSim));
+        const fullResults = await runSimulationBatch(allToSim, true);
+        setSimResults((prev) => ({ ...prev, ...fullResults }));
+      }
+    } catch (err: any) {
+      setSimError(err.message ?? "Erro na simulação");
+    } finally {
+      setLoadingIds(new Set());
+    }
+  }, [selectedIds, appliedIds, simResults, projects, runSimulationBatch]);
+
+  // ── Shift project dates to the suggested earliest feasible date ───────────
+
+  const handleShiftDates = useCallback(async (projectId: number, newStartDate: string) => {
+    const p = projects.find((x) => x.id === projectId);
+    if (!p) return;
+    const offsetMs = new Date(newStartDate).getTime() - new Date(p.startDate).getTime();
+    const offsetDays = Math.round(offsetMs / 86_400_000);
+    const newEnd = new Date(new Date(p.endDate).getTime() + offsetDays * 86_400_000)
+      .toISOString().split("T")[0];
+
+    setApplyLoading(true);
+    setSimError(null);
+    try {
+      await updateProject(projectId, { startDate: newStartDate, endDate: newEnd });
+      await fetchAll();
+      const toSim = selectedIds.filter((id) => !appliedIds.has(id));
+      if (toSim.length) runBatch(toSim);
+    } catch (err: any) {
+      setSimError(err.message ?? "Erro ao alterar datas");
+    } finally {
+      setApplyLoading(false);
+    }
+  }, [projects, updateProject, fetchAll, selectedIds, appliedIds, runBatch]);
+
+  // ── Preview calendar helpers ──────────────────────────────────────────────
+
+  type ChipEntry = { projectAcronym: string; role: string; color: { bg: string; border: string; text: string }; isProposed: boolean };
+
+  function getPreviewChips(consultantId: number, date: Date): ChipEntry[] {
+    const weekday = jsDateToWeekday(date);
+    if (!weekday) return [];
+    const chips: ChipEntry[] = [];
+
+    // Projects currently being simulated (selected, not yet applied):
+    // their DB allocations are suppressed — only the simulation proposal matters.
+    const beingSimulated = new Set(selectedIds.filter((id) => !appliedIds.has(id)));
+
+    // ── Confirmed / existing allocations from DB ──────────────────────────────
+    for (const p of projects) {
+      if (p.status === "archived") continue;
+      // For simulated projects, suppress a DB allocation only if the simulation
+      // produced a proposal for the same consultant on the same weekday (the dashed
+      // chip replaces it).  Existing allocations for consultants NOT in proposals
+      // keep showing as solid — they are confirmed and unchanged.
+      if (beingSimulated.has(p.id)) {
+        const proposals = simResults[p.id]?.proposed ?? [];
+        if (proposals.some((pa) => pa.consultantId === consultantId && pa.weekday === weekday)) continue;
+      }
+      const start = new Date(p.startDate), end = new Date(p.endDate);
+      if (date < start || date > end) continue;
+      if (p.cadence === "biweekly_odd"  && getISOWeek(date) % 2 === 0) continue;
+      if (p.cadence === "biweekly_even" && getISOWeek(date) % 2 === 1) continue;
+      const col = getProjectColor(p.id, projects);
+      if ((p.allocations ?? []).length > 0) {
+        const alloc = p.allocations!.find((a) => a.consultantId === consultantId && a.weekday === weekday);
+        if (alloc) chips.push({ projectAcronym: p.acronym, role: alloc.role, color: col, isProposed: false });
+      } else if ((p.allocatedConsultants ?? []).includes(consultantId) && (p.visitDays ?? []).includes(weekday)) {
+        chips.push({ projectAcronym: p.acronym, role: "Consultor", color: col, isProposed: false });
+      }
+    }
+
+    // ── Simulation proposals (feasible AND infeasible) ────────────────────────
+    // Feasible → dashed chip. Infeasible → no chip (the result card already shows the issue).
     for (const id of selectedIds) {
       if (appliedIds.has(id)) continue;
       const result = simResults[id];
-      if (!result) continue;
+      if (!result?.feasible) continue;
       const p = projects.find((x) => x.id === id);
       if (!p) continue;
+      const start = new Date(p.startDate), end = new Date(p.endDate);
+      if (date < start || date > end) continue;
+      if (p.cadence === "biweekly_odd"  && getISOWeek(date) % 2 === 0) continue;
+      if (p.cadence === "biweekly_even" && getISOWeek(date) % 2 === 1) continue;
       const col = getProjectColor(p.id, projects);
-
-      for (const alloc of result.proposed) {
-        const key = `${alloc.consultantId}-${alloc.weekday}`;
-        if (!grid[key]) grid[key] = [];
-        const exists = grid[key].some((e) => e.projectAcronym === p.acronym);
-        if (!exists) {
-          grid[key].push({ projectAcronym: p.acronym, role: alloc.role, color: col, isProposed: true });
+      for (const alloc of result.proposed.filter((a) => a.consultantId === consultantId && a.weekday === weekday)) {
+        if (!chips.some((c) => c.projectAcronym === p.acronym)) {
+          chips.push({ projectAcronym: p.acronym, role: alloc.role, color: col, isProposed: true });
         }
       }
     }
 
-    return grid;
+    return chips;
   }
 
-  function conflictLevel(aId: number, bId: number) {
-    if (aId === bId) return "self";
-    const c = conflicts.find((x) => (x.a.id === aId && x.b.id === bId) || (x.a.id === bId && x.b.id === aId));
-    return c ? c.severity : "none";
-  }
+  // ── Derived ───────────────────────────────────────────────────────────────
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const anyLoading = applyLoading || loadingIds.size > 0;
+  const feasibleCount = selectedIds.filter((id) => !appliedIds.has(id) && simResults[id]?.feasible).length;
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -161,318 +265,352 @@ export default function SimulationPage() {
       </div>
 
       <div className="page-content">
-        <div className="tabs">
-          {([["feasibility", "Viabilidade"], ["matrix", "Matriz de Conflitos"], ["capacity", "Capacidade"], ["scheduler", "Agendamento"]] as [Tab, string][]).map(([v, l]) => (
-            <button key={v} className={`tab-btn ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}>{l}</button>
-          ))}
-        </div>
+        <div className="grid-2" style={{ alignItems: "start", marginBottom: 24 }}>
 
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {tab === "feasibility" && (
+          {/* ── Left: project list ─────────────────────────────────────────── */}
           <div>
-            <div className="grid-2" style={{ alignItems: "start", marginBottom: 24 }}>
-              {/* ── Left: project selection ──────────────────────────────── */}
-              <div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                  <span style={{ fontWeight: 600, fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>
-                    Projetos ({selectedIds.length} selecionados)
-                  </span>
-                  {selectedIds.length > 0 && (
-                    <button className="btn btn-secondary btn-sm" onClick={() => runAll(true)} disabled={simLoading}>
-                      🔄 Nova sugestão
-                    </button>
-                  )}
-                </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <span style={{ fontWeight: 600, fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>
+                Projetos ({selectedIds.length} selecionados)
+              </span>
+              {feasibleCount > 0 && (
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleApplyAll}
+                  disabled={anyLoading}
+                >
+                  ✓ Alocar todos ({feasibleCount})
+                </button>
+              )}
+            </div>
 
-                {active.map((p) => {
-                  const isSelected = selectedIds.includes(p.id);
-                  const isApplied = appliedIds.has(p.id);
-                  return (
-                    <div
-                      key={p.id}
-                      onClick={() => !isApplied && handleSelect(p.id)}
-                      style={{
-                        padding: "11px 13px", borderRadius: 8,
-                        cursor: isApplied ? "default" : "pointer",
-                        marginBottom: 6,
-                        background: isSelected ? "#fff5f4" : "#fff",
-                        border: `1.5px solid ${isSelected ? "var(--red)" : "var(--border)"}`,
-                        opacity: isApplied ? 0.55 : 1,
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <input type="checkbox" checked={isSelected} disabled={isApplied} onChange={() => { }} style={{ accentColor: "var(--red)", width: 16, height: 16 }} />
-                          <div>
-                            <span style={{ fontFamily: "var(--font-hd)", fontWeight: 800, color: "var(--red)", marginRight: 8, fontSize: 15 }}>{p.acronym}</span>
-                            <span style={{ fontWeight: 600, fontSize: 13 }}>{p.client}</span>
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          {isApplied && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "#eafaf1", color: "#1e8449", fontWeight: 600 }}>✓ Alocado</span>}
-                          <StatusBadge status={p.status} />
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, paddingLeft: 24 }}>
-                        {p.startDate} → {p.endDate} · {CADENCE_LABELS[p.cadence]}
+            {simulatable.map((p) => {
+              const isSelected = selectedIds.includes(p.id);
+              const isApplied = appliedIds.has(p.id);
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => !isApplied && handleSelect(p.id)}
+                  style={{
+                    padding: "11px 13px", borderRadius: 8,
+                    cursor: isApplied ? "default" : "pointer",
+                    marginBottom: 6,
+                    background: isSelected ? "#fff5f4" : "#fff",
+                    border: `1.5px solid ${isSelected ? "var(--red)" : "var(--border)"}`,
+                    opacity: isApplied ? 0.55 : 1,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="checkbox" checked={isSelected} disabled={isApplied}
+                        onChange={() => {}}
+                        style={{ accentColor: "var(--red)", width: 16, height: 16 }}
+                      />
+                      <div>
+                        <span style={{ fontFamily: "var(--font-hd)", fontWeight: 800, color: "var(--red)", marginRight: 8, fontSize: 15 }}>
+                          {p.acronym}
+                        </span>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>{p.client}</span>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-
-              {/* ── Right: results ──────────────────────────────────────── */}
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 11, color: "var(--muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: ".06em" }}>
-                  Resultados
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {isApplied && (
+                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "#eafaf1", color: "#1e8449", fontWeight: 600 }}>
+                          ✓ Alocado
+                        </span>
+                      )}
+                      <StatusBadge status={p.status} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, paddingLeft: 24 }}>
+                    {p.startDate} → {p.endDate} · {CADENCE_LABELS[p.cadence]}
+                  </div>
                 </div>
+              );
+            })}
+          </div>
 
-                {simLoading && (
-                  <div className="card" style={{ textAlign: "center", padding: 24, color: "var(--muted)" }}>
-                    Simulando {selectedIds.filter((id) => !appliedIds.has(id)).length} projeto(s)...
+          {/* ── Right: results ─────────────────────────────────────────────── */}
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 11, color: "var(--muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              Resultados
+            </div>
+
+            {simError && (
+              <div className="sim-result warn" style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 13, color: "#c0392b" }}>❌ {simError}</div>
+              </div>
+            )}
+
+            {selectedIds.length === 0 && (
+              <div className="card">
+                <div className="empty-state">Selecione projetos para simular</div>
+              </div>
+            )}
+
+            {selectedIds.map((id) => {
+              const p = projects.find((x) => x.id === id);
+              const result = simResults[id];
+              const isApplied = appliedIds.has(id);
+              const isLoading = loadingIds.has(id);
+              if (!p) return null;
+
+              return (
+                <div key={id} style={{ marginBottom: 20 }}>
+                  {/* Project header */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontFamily: "var(--font-hd)", fontWeight: 800, color: "var(--red)", fontSize: 16 }}>
+                        {p.acronym}
+                      </span>
+                      <span style={{ fontWeight: 600, fontSize: 13, color: "var(--muted)" }}>{p.client}</span>
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>{p.startDate} → {p.endDate}</span>
+                    </div>
+                    {!isApplied && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleRefreshOne(id)}
+                        disabled={anyLoading}
+                        title="Gerar nova sugestão para todos os projetos selecionados"
+                      >
+                        🔄 Nova sugestão
+                      </button>
+                    )}
                   </div>
-                )}
 
-                {simError && (
-                  <div className="sim-result warn" style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 13, color: "#c0392b" }}>❌ {simError}</div>
-                  </div>
-                )}
+                  {/* Loading state */}
+                  {isLoading && (
+                    <div className="card" style={{ textAlign: "center", padding: 20, color: "var(--muted)", fontSize: 13 }}>
+                      Simulando {loadingIds.size} projeto{loadingIds.size !== 1 ? "s" : ""} em conjunto...
+                    </div>
+                  )}
 
-                {selectedIds.length === 0 && !simLoading && (
-                  <div className="card"><div className="empty-state">Selecione projetos para simular</div></div>
-                )}
+                  {/* Awaiting */}
+                  {!result && !isLoading && (
+                    <div className="card" style={{ padding: 16, color: "var(--muted)", fontSize: 13 }}>
+                      Aguardando simulação...
+                    </div>
+                  )}
 
-                {!simLoading && selectedIds.map((id) => {
-                  const p = projects.find((x) => x.id === id);
-                  const result = simResults[id];
-                  const isApplied = appliedIds.has(id);
-                  if (!p) return null;
+                  {/* Result */}
+                  {result && !isLoading && (
+                    <>
+                      {/* Feasibility + date prediction */}
+                      <div className={`sim-result ${result.feasible ? "ok" : "warn"}`}>
+                        <div style={{ fontFamily: "var(--font-hd)", fontWeight: 700, fontSize: 14, marginBottom: 6, color: result.feasible ? "#1e8449" : "#c0392b" }}>
+                          {result.feasible ? "✅ Viável na data original" : "⚠️ Inviável na data original"}
+                        </div>
 
-                  return (
-                    <div key={id} style={{ marginBottom: 16 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        <span style={{ fontFamily: "var(--font-hd)", fontWeight: 800, color: "var(--red)", fontSize: 16 }}>{p.acronym}</span>
-                        <span style={{ fontWeight: 600, fontSize: 13, color: "var(--muted)" }}>{p.client}</span>
-                        <span style={{ fontSize: 11, color: "var(--muted)" }}>{p.startDate} → {p.endDate}</span>
+                        {result.issues.map((iss, i) => (
+                          <div key={i} style={{ fontSize: 13, color: "#c0392b", marginBottom: 3 }}>• {iss}</div>
+                        ))}
+                        {result.suggestions.map((s, i) => (
+                          <div key={i} style={{ fontSize: 13, color: "#1e8449", marginBottom: 3 }}>✓ {s}</div>
+                        ))}
+
+                        {/* Date prediction — shown for infeasible OR as confirmation for feasible */}
+                        {result.feasible ? (
+                          <div style={{ marginTop: 8, padding: "7px 11px", background: "#eafaf1", borderRadius: 6, fontSize: 13, color: "#1e8449", fontWeight: 600 }}>
+                            📅 Início possível: <strong>{p.startDate}</strong>
+                            <span style={{ fontWeight: 400, marginLeft: 6 }}>— na data prevista</span>
+                          </div>
+                        ) : result.earliestFeasibleDate ? (
+                          <div style={{ marginTop: 8, padding: "7px 11px", background: "#fef9e7", borderRadius: 6, fontSize: 13, color: "#e67e22", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                            <span>📅 Data mais próxima viável: <strong>{result.earliestFeasibleDate}</strong></span>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ flexShrink: 0 }}
+                              disabled={anyLoading}
+                              onClick={() => handleShiftDates(id, result.earliestFeasibleDate!)}
+                            >
+                              Usar esta data →
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: 8, padding: "7px 11px", background: "#fdedec", borderRadius: 6, fontSize: 13, color: "#c0392b", fontWeight: 600 }}>
+                            📅 Sem data viável nas próximas 26 semanas
+                          </div>
+                        )}
                       </div>
 
-                      {!result && !simLoading && (
-                        <div className="card" style={{ padding: 16, color: "var(--muted)", fontSize: 13 }}>Aguardando simulação...</div>
-                      )}
-
-                      {result && (
-                        <>
-                          <div className={`sim-result ${result.feasible ? "ok" : "warn"}`}>
-                            <div style={{ fontFamily: "var(--font-hd)", fontWeight: 700, fontSize: 14, marginBottom: 8, color: result.feasible ? "#1e8449" : "#c0392b" }}>
-                              {result.feasible ? "✅ Viável nas datas propostas" : "⚠️ Inviável nas datas propostas"}
-                            </div>
-                            {result.issues.map((iss, i) => (
-                              <div key={i} style={{ fontSize: 13, color: "#c0392b", marginBottom: 3 }}>• {iss}</div>
-                            ))}
-                            {result.suggestions.map((s, i) => (
-                              <div key={i} style={{ fontSize: 13, color: "#1e8449", marginBottom: 3 }}>✓ {s}</div>
-                            ))}
-                            {/* Earliest feasible date */}
-                            {result.earliestFeasibleDate && (
-                              <div style={{ marginTop: 10, padding: "8px 12px", background: "#ebf5fb", borderRadius: 6, fontSize: 13, color: "#2e86c1", fontWeight: 600 }}>
-                                📅 Data mais cedo viável: <strong>{result.earliestFeasibleDate}</strong>
-                              </div>
+                      {/* Proposed team */}
+                      {result.proposed.length > 0 && (
+                        <div className="card" style={{ marginTop: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                            <div className="card-title" style={{ margin: 0 }}>Time Sugerido</div>
+                            {result.feasible && !isApplied && (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() => handleApply(id)}
+                                disabled={applyLoading}
+                              >
+                                ✓ Alocar pessoas
+                              </button>
+                            )}
+                            {isApplied && (
+                              <span style={{ fontSize: 12, color: "#1e8449", fontWeight: 600 }}>✅ Alocado e confirmado</span>
                             )}
                           </div>
 
-                          {result.proposed.length > 0 && (
-                            <div className="card" style={{ marginTop: 8 }}>
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                                <div className="card-title" style={{ margin: 0 }}>Time Sugerido</div>
-                                {result.feasible && !isApplied && (
-                                  <button className="btn btn-primary btn-sm" onClick={() => handleApply(id)}>
-                                    ✓ Alocar pessoas
-                                  </button>
-                                )}
-                                {isApplied && (
-                                  <span style={{ fontSize: 12, color: "#1e8449", fontWeight: 600 }}>✅ Alocado e confirmado</span>
-                                )}
-                              </div>
-                              {(() => {
-                                const grouped = new Map<number, ProposedAllocation[]>();
-                                for (const a of result.proposed) {
-                                  if (!grouped.has(a.consultantId)) grouped.set(a.consultantId, []);
-                                  grouped.get(a.consultantId)!.push(a);
-                                }
-                                return Array.from(grouped.entries()).map(([cId, allocs]) => {
-                                  const ci = consultants.findIndex((c) => c.id === cId);
-                                  return (
-                                    <div key={cId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-                                      <Avatar name={allocs[0].consultantName} index={ci >= 0 ? ci : 0} size={28} />
-                                      <div style={{ flex: 1 }}>
-                                        <div style={{ fontWeight: 600, fontSize: 13 }}>{allocs[0].consultantName}</div>
-                                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{allocs[0].slotDescription}</div>
-                                      </div>
-                                      <div style={{ textAlign: "right" }}>
-                                        <div style={{ fontSize: 12, fontWeight: 600, color: "#2e86c1" }}>
-                                          {allocs.map((a) => DAY_NAMES[a.weekday]).join(", ")}
-                                        </div>
-                                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{allocs.length}x/sem · {allocs[0].role}</div>
-                                      </div>
+                          {(() => {
+                            const grouped = new Map<number, ProposedAllocation[]>();
+                            for (const a of result.proposed) {
+                              if (!grouped.has(a.consultantId)) grouped.set(a.consultantId, []);
+                              grouped.get(a.consultantId)!.push(a);
+                            }
+                            return Array.from(grouped.entries()).map(([cId, allocs]) => {
+                              const ci = consultants.findIndex((c) => c.id === cId);
+                              return (
+                                <div key={cId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                                  <Avatar name={allocs[0].consultantName} index={ci >= 0 ? ci : 0} size={28} />
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 600, fontSize: 13 }}>{allocs[0].consultantName}</div>
+                                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{allocs[0].slotDescription}</div>
+                                  </div>
+                                  <div style={{ textAlign: "right" }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#2e86c1" }}>
+                                      {allocs.map((a) => DAY_NAMES[a.weekday]).join(", ")}
                                     </div>
-                                  );
-                                });
-                              })()}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* ── Preview Calendar ────────────────────────────────────────── */}
-            {selectedIds.length > 0 && Object.keys(simResults).length > 0 && (
-              <div className="card">
-                <div className="card-title">Prévia do Calendário Semanal</div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 14 }}>
-                  Existentes (sólido) + propostas (tracejado). Cada consultor aparece em no máximo 1 projeto por dia.
-                </div>
-                <div style={{ overflowX: "auto" }}>
-                  <table className="cal-table">
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: "left", width: 150 }}>Consultor</th>
-                        {[1, 2, 3, 4, 5].map((d) => (
-                          <th key={d}><span className="cal-th-day">{DAY_NAMES[d]}</span></th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        const grid = buildPreviewCalendar();
-                        const relevantIds = new Set<number>();
-                        for (const key of Object.keys(grid)) relevantIds.add(Number(key.split("-")[0]));
-                        const orderedIds = consultants.map((c) => c.id).filter((id) => relevantIds.has(id));
-
-                        return orderedIds.map((cId) => {
-                          const c = consultants.find((x) => x.id === cId);
-                          if (!c) return null;
-                          const ci = consultants.indexOf(c);
-
-                          return (
-                            <tr key={cId}>
-                              <td style={{ padding: "8px 10px", background: "var(--surface)" }}>
-                                <div className="cal-consultant">
-                                  <Avatar name={c.name} index={ci} size={26} />
-                                  <div>
-                                    <div className="cal-name" style={{ fontSize: 12 }}>{c.name.split(" ")[0]}</div>
-                                    <div className="cal-sub" style={{ fontSize: 10 }}>{LEVEL_LABELS[c.level]}{c.isLeader ? " ★" : ""}</div>
+                                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                                      {allocs.length}x/sem · {allocs[0].role}
+                                    </div>
                                   </div>
                                 </div>
-                              </td>
-                              {[1, 2, 3, 4, 5].map((d) => {
-                                const entries = grid[`${cId}-${d}`] ?? [];
-                                const isRestricted = c.restrictions.includes(d as any);
-                                const hasConflict = entries.length > 1;
-
-                                return (
-                                  <td key={d}>
-                                    <div className={`cal-cell${isRestricted && !entries.length ? " restricted" : ""}`} style={{ minHeight: 40, background: hasConflict ? "#fff0f0" : undefined }}>
-                                      {isRestricted && !entries.length && <span className="restricted-dot" style={{ marginTop: 12 }} />}
-                                      {entries.map((e, i) => (
-                                        <div key={i} className="cal-chip" style={{
-                                          background: e.color.bg,
-                                          borderLeftColor: e.color.border,
-                                          color: e.color.text,
-                                          borderStyle: e.isProposed ? "dashed" : "solid",
-                                          borderWidth: e.isProposed ? "1.5px 1.5px 1.5px 3px" : undefined,
-                                          borderColor: e.isProposed ? e.color.border : undefined,
-                                        }}>
-                                          <span className="cal-chip-acronym">{e.projectAcronym}</span>
-                                          <span className="cal-chip-role">— {e.role}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          );
-                        });
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {tab === "matrix" && (
-          <div className="card">
-            <div className="card-title">Matriz de Conflitos</div>
-            <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>
-              Considera sobreposição real de datas, não apenas dias da semana.
-            </p>
-            <div style={{ overflowX: "auto" }}>
-              <table className="matrix-table">
-                <thead><tr><th>Projeto</th>
-                  {matrixProjects.map((p) => (
-                    <th key={p.id}><span style={{ color: "var(--red)", fontWeight: 800 }}>{p.acronym}</span><br /><span style={{ fontWeight: 400, color: "var(--muted)" }}>{p.client}</span></th>
-                  ))}
-                </tr></thead>
-                <tbody>{matrixProjects.map((a) => (
-                  <tr key={a.id}><td><strong style={{ color: "var(--red)" }}>{a.acronym}</strong> {a.client}</td>
-                    {matrixProjects.map((b) => {
-                      const lv = conflictLevel(a.id, b.id);
-                      if (lv === "self") return <td key={b.id} className="c-self">—</td>;
-                      if (lv === "high") return <td key={b.id} className="c-high">⚠ Alto</td>;
-                      if (lv === "medium") return <td key={b.id} className="c-medium">△ Médio</td>;
-                      return <td key={b.id} className="c-ok">✓ OK</td>;
-                    })}
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════ */}
-        {tab === "capacity" && (
-          <div className="card">
-            <div className="card-title">Capacidade Individual</div>
-            {consultants.map((c, i) => {
-              const { total, projects: cps } = computeLoad(c.id, projects);
-              const pct = Math.min(100, (total / c.maxDays) * 100);
-              const color = pct >= 90 ? "#e74c3c" : pct >= 70 ? "#e67e22" : "#27ae60";
-              return (
-                <div key={c.id} style={{ padding: "14px 0", borderBottom: "1px solid var(--border)" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
-                    <Avatar name={c.name} index={i} size={30} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontWeight: 600 }}>{c.name} <LevelTag level={c.level} isLeader={c.isLeader} /></span>
-                        <span style={{ fontSize: 13, color, fontWeight: 700 }}>{total.toFixed(1)}/{c.maxDays}d</span>
-                      </div>
-                      <div style={{ height: 5, background: "#e9ecef", borderRadius: 3, marginTop: 5, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 3 }} />
-                      </div>
-                    </div>
-                  </div>
-                  {cps.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingLeft: 42 }}>
-                      {cps.map((p) => {
-                        const col = getProjectColor(p.id, projects);
-                        return <span key={p.id} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: col.bg, color: col.text, fontWeight: 700, borderLeft: `3px solid ${col.border}` }}>{p.acronym} · {CADENCE_LABELS[p.cadence].split(" ")[0]}</span>;
-                      })}
-                    </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               );
             })}
           </div>
-        )}
-        {tab === "scheduler" && <SchedulerTab />}
+        </div>
+
+        {/* ── Preview calendar ───────────────────────────────────────────────── */}
+        {selectedIds.length > 0 && Object.keys(simResults).length > 0 && (() => {
+          const previewDays = [0, 1, 2, 3, 4].map((i) => addDays(previewWeekStart, i));
+          const weekEnd = previewDays[4];
+
+          const relevantConsultants = consultants.filter((c) =>
+            previewDays.some((d) => getPreviewChips(c.id, d).length > 0)
+          );
+
+          return (
+            <div className="card">
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                <div className="card-title" style={{ margin: 0, flex: 1 }}>Calendário da Simulação</div>
+                <button className="btn btn-secondary btn-sm" onClick={() => setPreviewWeekStart((d) => addDays(d, -7))}>‹ Anterior</button>
+                <span style={{ fontSize: 12, fontWeight: 600, minWidth: 170, textAlign: "center", color: "var(--muted)" }}>
+                  Semana {getISOWeek(previewWeekStart)} · {fmtDate(previewWeekStart)}–{fmtDate(weekEnd)}
+                </span>
+                <button className="btn btn-secondary btn-sm" onClick={() => setPreviewWeekStart((d) => addDays(d, 7))}>Próximo ›</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setPreviewWeekStart(getMondayOfWeek(new Date()))}>Hoje</button>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                {selectedIds.map((id) => {
+                  const p = projects.find((x) => x.id === id);
+                  if (!p) return null;
+                  const col = getProjectColor(p.id, projects);
+                  const pStart = new Date(p.startDate), pEnd = new Date(p.endDate);
+                  const isActive = pStart <= weekEnd && pEnd >= previewWeekStart;
+                  return (
+                    <span key={id} style={{
+                      fontSize: 11, padding: "2px 8px", borderRadius: 4, fontWeight: 600,
+                      background: isActive ? col.bg : "transparent",
+                      color: isActive ? col.text : "var(--muted)",
+                      border: `1.5px ${isActive ? "solid" : "dashed"} ${isActive ? col.border : "var(--border)"}`,
+                    }}>
+                      {isActive ? "●" : "○"} {p.acronym} · {p.startDate} → {p.endDate}
+                    </span>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", gap: 16, marginBottom: 12, fontSize: 11, color: "var(--muted)" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ display: "inline-block", width: 20, height: 10, background: "#d6eaf8", border: "2px solid #2e86c1", borderRadius: 2 }} />
+                  Confirmado
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ display: "inline-block", width: 20, height: 10, background: "#d6eaf8", border: "2px dashed #2e86c1", borderRadius: 2 }} />
+                  Proposta da simulação
+                </span>
+              </div>
+
+              <div style={{ overflowX: "auto" }}>
+                <table className="cal-table">
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", width: 150 }}>Consultor</th>
+                      {previewDays.map((d, i) => (
+                        <th key={i}><span className="cal-th-day">{DAY_NAMES[i + 1]} {fmtDate(d)}</span></th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {relevantConsultants.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ textAlign: "center", padding: 24, color: "var(--muted)", fontSize: 13 }}>
+                          Nenhum consultor alocado nesta semana — navegue para o período do projeto
+                        </td>
+                      </tr>
+                    ) : (
+                      relevantConsultants.map((c) => {
+                        const ci = consultants.indexOf(c);
+                        return (
+                          <tr key={c.id}>
+                            <td style={{ padding: "8px 10px", background: "var(--surface)" }}>
+                              <div className="cal-consultant">
+                                <Avatar name={c.name} index={ci} size={26} />
+                                <div>
+                                  <div className="cal-name" style={{ fontSize: 12 }}>{c.name.split(" ")[0]}</div>
+                                  <div className="cal-sub" style={{ fontSize: 10 }}>{LEVEL_LABELS[c.level]}{c.isLeader ? " ★" : ""}</div>
+                                </div>
+                              </div>
+                            </td>
+                            {previewDays.map((date, di) => {
+                              const chips = getPreviewChips(c.id, date);
+                              const isRestricted = c.restrictions.includes((di + 1) as any);
+                              const hasConflict = chips.length > 1;
+                              return (
+                                <td key={di}>
+                                  <div
+                                    className={`cal-cell${isRestricted && !chips.length ? " restricted" : ""}`}
+                                    style={{ minHeight: 40, background: hasConflict ? "#fff0f0" : undefined }}
+                                  >
+                                    {isRestricted && !chips.length && <span className="restricted-dot" style={{ marginTop: 12 }} />}
+                                    {chips.map((e: ChipEntry, i: number) => (
+                                      <div key={i} className="cal-chip" style={{
+                                        background: e.color.bg,
+                                        borderLeftColor: e.color.border,
+                                        color: e.color.text,
+                                        borderStyle: e.isProposed ? "dashed" : "solid",
+                                        borderWidth: e.isProposed ? "1.5px 1.5px 1.5px 3px" : undefined,
+                                        borderColor: e.isProposed ? e.color.border : undefined,
+                                      }}>
+                                        <span className="cal-chip-acronym">{e.projectAcronym}</span>
+                                        <span className="cal-chip-role">— {e.role}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </>
   );

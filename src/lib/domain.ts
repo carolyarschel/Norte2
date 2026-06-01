@@ -88,6 +88,17 @@ export function projectVisitsOnDate(project: Project, date: Date): boolean {
   return false;
 }
 
+/**
+ * True when a confirmed project already has every slot filled by a consultant.
+ * These projects don't need to appear in the simulation selection list.
+ */
+export function isFullyAllocated(project: Project): boolean {
+  const totalSlots = (project.levelSlots ?? []).length + (project.pinnedSlots ?? []).length;
+  if (totalSlots === 0) return true;
+  const allocatedCount = new Set((project.allocations ?? []).map((a) => a.consultantId)).size;
+  return allocatedCount >= totalSlots;
+}
+
 /** Weekly cost of the project in days/week (0.5x for biweekly). */
 export function projectDayCost(project: Project): number {
   const factor = project.cadence === "weekly" ? 1 : 0.5;
@@ -112,9 +123,11 @@ export function computeLoad(consultantId: number, projects: Project[]): Consulta
     const factor = p.cadence === "weekly" ? 1 : 0.5;
     if (pinned) {
       total += pinned.daysPerWeek * factor;
+    } else if ((p.allocations ?? []).length > 0) {
+      const days = p.allocations!.filter((a) => a.consultantId === consultantId).length;
+      total += days * factor;
     } else {
-      // find which level slot they satisfy
-      total += factor; // at least 1 day attribution if no pinned slot
+      total += factor;
     }
     list.push(p);
   }

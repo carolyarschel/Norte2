@@ -1,12 +1,18 @@
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "../lib/errors";
 
-export function errorHandler(err: Error, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: any, _req: Request, res: Response, _next: NextFunction) {
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       error: err.message,
-      details: err.details ?? undefined,
+      ...(err.details !== undefined && { details: err.details }),
     });
+    return;
+  }
+
+  // Postgres unique-violation and other driver errors
+  if (err.code === "23505") {
+    res.status(409).json({ error: "Registro duplicado" });
     return;
   }
 

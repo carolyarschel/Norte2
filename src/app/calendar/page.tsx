@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import {
   getMondayOfWeek, addDays, fmtDate, getISOWeek,
-  projectVisitsOnDate, getProjectColor,
-  DAY_NAMES, LEVEL_LABELS, CADENCE_LABELS,
+  jsDateToWeekday, getProjectColor,
+  DAY_NAMES, LEVEL_LABELS,
 } from "@/lib/domain";
 import { Avatar } from "@/components/ui";
 import type { Weekday } from "@/types";
@@ -28,18 +28,39 @@ export default function CalendarPage() {
   const activeProjects = projects.filter((p) => p.status !== "archived");
 
   function getChips(consultantId: number, date: Date) {
+    const weekday = jsDateToWeekday(date);
+    if (!weekday) return [];
+
     return activeProjects
-      .filter(
-        (p) =>
+      .filter((p) => {
+        const start = new Date(p.startDate);
+        const end = new Date(p.endDate);
+        if (date < start || date > end) return false;
+        if (p.cadence === "biweekly_odd"  && getISOWeek(date) % 2 === 0) return false;
+        if (p.cadence === "biweekly_even" && getISOWeek(date) % 2 === 1) return false;
+
+        // Use precise per-consultant-per-day allocations when available
+        if ((p.allocations ?? []).length > 0) {
+          return p.allocations!.some(
+            (a) => a.consultantId === consultantId && a.weekday === weekday
+          );
+        }
+
+        // Fallback for projects without resolved allocations (e.g. pinned but not yet simulated)
+        return (
           (p.allocatedConsultants ?? []).includes(consultantId) &&
-          projectVisitsOnDate(p, date)
-      )
+          (p.visitDays ?? []).includes(weekday)
+        );
+      })
       .map((p) => {
+        const alloc = (p.allocations ?? []).find(
+          (a) => a.consultantId === consultantId && a.weekday === weekday
+        );
         const c = consultants.find((x) => x.id === consultantId)!;
         const isLeader = p.pinnedSlots?.some((s) => s.consultantId === consultantId) && c.isLeader;
         return {
           project: p,
-          role: isLeader ? "Líder" : "Consultor",
+          role: alloc?.role ?? (isLeader ? "Líder" : "Consultor"),
           color: getProjectColor(p.id, projects),
         };
       });
@@ -69,6 +90,12 @@ export default function CalendarPage() {
           onClick={() => setWeekStart((d) => addDays(d, 7))}
         >
           Próximo ›
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => setWeekStart(getMondayOfWeek(new Date()))}
+        >
+          Hoje
         </button>
         <span className="cal-week-label">
           Semana {weekNum} ({fmtDate(weekStart)}–{fmtDate(weekDays[4])})
@@ -139,25 +166,6 @@ export default function CalendarPage() {
           </table>
         </div>
 
-        {/* Legend */}
-        <div style={{ marginTop: 14, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>LEGENDA:</span>
-          {activeProjects.map((p) => {
-            const col = getProjectColor(p.id, projects);
-            return (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: col.bg, border: `2px solid ${col.border}`, display: "inline-block" }} />
-                <strong style={{ color: col.border }}>{p.acronym}</strong>
-                <span style={{ color: "var(--muted)" }}>{p.client}</span>
-                <span style={{ color: "var(--muted)", fontSize: 11 }}>({CADENCE_LABELS[p.cadence]})</span>
-              </div>
-            );
-          })}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#e74c3c", display: "inline-block", opacity: 0.35 }} />
-            <span style={{ color: "var(--muted)" }}>Dia restrito</span>
-          </div>
-        </div>
       </div>
     </>
   );

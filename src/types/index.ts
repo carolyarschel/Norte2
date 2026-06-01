@@ -20,6 +20,7 @@ export interface PinnedSlot {
   consultantId: number;
   daysPerWeek: number;
   visitDays: Weekday[];       // empty = to be decided by simulation
+  cadence?: Cadence | null;   // null/undefined = inherit project cadence
 }
 
 // ─── Core entities ────────────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ export interface Project {
   startDate: string;
   endDate: string;
   cadence: Cadence;
+  leaderId?: number | null;       // which allocated consultant is acting as project leader
   // Demand definition (replaces old visitDays + requiredLeader + mandatoryConsultants)
   levelSlots: LevelSlot[];
   pinnedSlots: PinnedSlot[];

@@ -1,6 +1,11 @@
 import { pool, query } from "../config/database";
 
 async function seed() {
+  if (process.env.NODE_ENV === "production") {
+    console.error("❌ Seed bloqueado em produção. Defina NODE_ENV != 'production' para executar.");
+    process.exit(1);
+  }
+
   console.log("🌱 Seeding database...\n");
 
   // Clear existing data

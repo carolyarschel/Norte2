@@ -110,6 +110,7 @@ body {
 /* ── Main content ───────────────────────────────────────────────────────── */
 .main-content {
   flex: 1;
+  min-width: 0;
   margin-left: 220px;
   min-height: 100vh;
   display: flex;
@@ -562,3 +563,34 @@ body {
 /* ── Misc ───────────────────────────────────────────────────────────────── */
 .empty-state { text-align: center; padding: 48px; color: var(--muted); }
 .divider     { height: 1px; background: var(--border); margin: 16px 0; }
+
+/* ── Dark mode ──────────────────────────────────────────────────────────── */
+html.dark {
+  --bg:      #111827;
+  --surface: #1f2937;
+  --border:  #374151;
+  --text:    #f9fafb;
+  --muted:   #9ca3af;
+  --red-lt:  rgba(192, 57, 43, 0.18);
+  color-scheme: dark;
+}
+
+html.dark .chip                { background: var(--surface); }
+html.dark .cal-cell            { background: var(--surface); }
+html.dark .cal-cell.restricted { background: #1f1520; }
+html.dark .cap-bar-track       { background: var(--border); }
+html.dark .day-chip            { background: rgba(46,134,193,0.18); color: #5dade2; }
+html.dark .cadence-chip        { background: rgba(125,60,152,0.18); color: #a569bd; }
+html.dark .btn-secondary       { background: var(--surface); }
+html.dark .btn-ghost           { background: transparent; }
+html.dark .form-input,
+html.dark .form-select         { background: #111827; color: var(--text); }
+html.dark .conflict-banner     { background: rgba(192,57,43,0.12); border-color: rgba(192,57,43,0.3); }
+html.dark .sim-result.ok       { background: #0d1f16; border-color: #1e5c35; }
+html.dark .sim-result.warn     { background: #1f1214; border-color: #5c2020; }
+html.dark .c-high              { background: rgba(192,57,43,0.25);  color: #e07060; }
+html.dark .c-medium            { background: rgba(202,111,30,0.2);  color: #e59a50; }
+html.dark .c-ok                { background: rgba(30,132,73,0.2);   color: #4caf80; }
+html.dark .c-self              { background: var(--bg); color: var(--muted); }
+html.dark .modal-overlay       { background: rgba(0,0,0,0.6); }
+html.dark .gantt-bar[style*="color: #fff"] { text-shadow: 0 1px 2px rgba(0,0,0,0.4); }

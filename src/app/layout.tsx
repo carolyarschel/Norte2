@@ -4,7 +4,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { StoreProvider } from "@/components/StoreProvider"; // <- adiciona
 
 export const metadata: Metadata = {
-  title: "Alloc Platform",
+  title: "NORTE",
   description: "Plataforma de alocação de consultores",
 };
 

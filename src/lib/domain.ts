@@ -192,12 +192,24 @@ export function detectConflicts(projects: Project[]): ConflictEntry[] {
       // For each shared consultant, check if they visit BOTH projects on the SAME day
       const conflictingDays = new Set<Weekday>();
       for (const cId of sc) {
+        // Actual allocations are the authoritative source; fall back to pinned slot
+        // request days, then to the project-wide union (least precise).
+        const aAllocDays = (a.allocations ?? [])
+          .filter((al) => al.consultantId === cId)
+          .map((al) => al.weekday as Weekday);
+        const bAllocDays = (b.allocations ?? [])
+          .filter((al) => al.consultantId === cId)
+          .map((al) => al.weekday as Weekday);
+
         const aPinned = (a.pinnedSlots ?? []).find((s) => s.consultantId === cId);
         const bPinned = (b.pinnedSlots ?? []).find((s) => s.consultantId === cId);
 
-        // Days this consultant actually visits in each project
-        const aDays: Weekday[] = aPinned?.visitDays?.length ? aPinned.visitDays : (a.visitDays ?? []);
-        const bDays: Weekday[] = bPinned?.visitDays?.length ? bPinned.visitDays : (b.visitDays ?? []);
+        const aDays: Weekday[] = aAllocDays.length
+          ? aAllocDays
+          : (aPinned?.visitDays?.length ? aPinned.visitDays : (a.visitDays ?? []));
+        const bDays: Weekday[] = bAllocDays.length
+          ? bAllocDays
+          : (bPinned?.visitDays?.length ? bPinned.visitDays : (b.visitDays ?? []));
 
         aDays.filter((d) => bDays.includes(d)).forEach((d) => conflictingDays.add(d));
       }

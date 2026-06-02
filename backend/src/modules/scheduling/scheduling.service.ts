@@ -1,6 +1,7 @@
 import { projectRepo, LevelSlotRow } from "../projects/project.repository";
 import { consultantRepo, ConsultantRow } from "../consultants/consultant.repository";
-import { simulationService } from "../simulation/simulation.service";
+import { simulationService, SimResult } from "../simulation/simulation.service";
+import { toDateStr } from "../../lib/dates";
 
 // ─── Scoring constants ────────────────────────────────────────────────────────
 
@@ -76,13 +77,6 @@ function computeScarcity(
   return { score: parseFloat(score.toFixed(3)), reason: reasons.join("; ") };
 }
 
-// ─── Date normalization helper ────────────────────────────────────────────────
-
-function toDateStr(raw: any): string {
-  if (raw instanceof Date) return raw.toISOString().split("T")[0];
-  return String(raw).split("T")[0];
-}
-
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export const schedulingService = {
@@ -148,7 +142,7 @@ export const schedulingService = {
 
     // ── 4. Map to ScheduleEntry ──────────────────────────────────────────────
     return scored.map((s, idx) => {
-      const sim = simResults[s.projectId] ?? {
+      const sim: SimResult = simResults[s.projectId] ?? {
         feasible: false,
         issues: ["Resultado de simulação não encontrado"],
         suggestions: [],
@@ -158,7 +152,7 @@ export const schedulingService = {
 
       const suggestedStartDate = sim.feasible
         ? s.originalStartDate
-        : (sim as any).earliestFeasibleDate ?? null;
+        : sim.earliestFeasibleDate ?? null;
 
       const weeksDelayed =
         suggestedStartDate && suggestedStartDate !== s.originalStartDate
@@ -179,7 +173,7 @@ export const schedulingService = {
         canBeScheduled: sim.feasible || suggestedStartDate !== null,
         issues: sim.issues,
         suggestions: sim.suggestions,
-        proposed: (sim as any).proposed ?? [],
+        proposed: sim.proposed,
         scarcityReason: s.scarcityReason,
       };
     });

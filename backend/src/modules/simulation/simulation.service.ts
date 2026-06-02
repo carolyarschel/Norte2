@@ -2,14 +2,11 @@ import { query } from "../../config/database";
 import { projectRepo } from "../projects/project.repository";
 import { consultantRepo, ConsultantRow } from "../consultants/consultant.repository";
 import { NotFoundError } from "../../lib/errors";
+import { toDateStr } from "../../lib/dates";
 
 const DAY_NAMES: Record<number, string> = { 1: "Seg", 2: "Ter", 3: "Qua", 4: "Qui", 5: "Sex" };
 const CADENCE_SHORT: Record<string, string> = { weekly: "semanal", biweekly_odd: "quinzenal ímpar", biweekly_even: "quinzenal par" };
 
-function toDateString(v: unknown): string {
-  if (v instanceof Date) return v.toISOString().split("T")[0];
-  return String(v);
-}
 const LEVEL_LABELS: Record<string, string> = { senior: "Sênior", pleno: "Pleno", junior: "Júnior" };
 const ALL_DAYS = [1, 2, 3, 4, 5];
 const LEVEL_RANK: Record<string, number> = { junior: 0, pleno: 1, senior: 2 };
@@ -29,13 +26,22 @@ function shuffle<T>(arr: T[]): T[] {
 
 // ─── Date-aware conflict checking ────────────────────────────────────────────
 
-interface CommittedEntry {
+export interface CommittedEntry {
   consultantId: number;
   weekday: number;
   cadence: string;
   startDate: string;
   endDate: string;
   projectId: number;
+}
+
+interface AllocationDbRow {
+  consultant_id: number;
+  weekday: number;
+  cadence: string;
+  start_date: Date;
+  end_date: Date;
+  project_id: number;
 }
 
 /** Do two date ranges overlap? */
@@ -77,37 +83,30 @@ function getBlockedDays(
 
 /** Loads all committed allocations from the database (excluding specific project IDs). */
 async function loadCommittedFromDB(excludeProjectIds: number[]): Promise<CommittedEntry[]> {
+  const toEntry = (r: AllocationDbRow): CommittedEntry => ({
+    consultantId: r.consultant_id,
+    weekday:      r.weekday,
+    cadence:      r.cadence,
+    startDate:    toDateStr(r.start_date),
+    endDate:      toDateStr(r.end_date),
+    projectId:    r.project_id,
+  });
+
+  const SQL = `SELECT a.consultant_id, a.weekday, p.cadence, p.start_date, p.end_date, p.id as project_id
+               FROM allocations a JOIN projects p ON a.project_id = p.id
+               WHERE p.status != 'archived'`;
+
   if (excludeProjectIds.length === 0) {
-    const rows = await query(
-      `SELECT a.consultant_id, a.weekday, p.cadence, p.start_date, p.end_date, p.id as project_id
-       FROM allocations a JOIN projects p ON a.project_id = p.id
-       WHERE p.status != 'archived'`
-    );
-    return rows.map((r: any) => ({
-      consultantId: r.consultant_id,
-      weekday: r.weekday,
-      cadence: r.cadence,
-      startDate: r.start_date.toISOString().split("T")[0],
-      endDate: r.end_date.toISOString().split("T")[0],
-      projectId: r.project_id,
-    }));
+    const rows = await query<AllocationDbRow>(SQL);
+    return rows.map(toEntry);
   }
 
   const placeholders = excludeProjectIds.map((_, i) => `$${i + 1}`).join(",");
-  const rows = await query(
-    `SELECT a.consultant_id, a.weekday, p.cadence, p.start_date, p.end_date, p.id as project_id
-     FROM allocations a JOIN projects p ON a.project_id = p.id
-     WHERE p.status != 'archived' AND p.id NOT IN (${placeholders})`,
-    excludeProjectIds
+  const rows = await query<AllocationDbRow>(
+    `${SQL} AND p.id NOT IN (${placeholders})`,
+    excludeProjectIds,
   );
-  return rows.map((r: any) => ({
-    consultantId: r.consultant_id,
-    weekday: r.weekday,
-    cadence: r.cadence,
-    startDate: r.start_date.toISOString().split("T")[0],
-    endDate: r.end_date.toISOString().split("T")[0],
-    projectId: r.project_id,
-  }));
+  return rows.map(toEntry);
 }
 
 // ─── Day picking ─────────────────────────────────────────────────────────────
@@ -150,7 +149,7 @@ interface ProposedAllocation {
   cadence: string; // effective cadence for this consultant in this project
 }
 
-interface SimResult {
+export interface SimResult {
   feasible: boolean;
   issues: string[];
   suggestions: string[];
@@ -171,8 +170,8 @@ async function runSimulation(
   const project = await projectRepo.findById(projectId);
   if (!project) throw new NotFoundError("Projeto", projectId);
 
-  const startDate = projectOverrides?.startDate ?? toDateString(project.start_date);
-  const endDate   = projectOverrides?.endDate   ?? toDateString(project.end_date);
+  const startDate = projectOverrides?.startDate ?? toDateStr(project.start_date);
+  const endDate   = projectOverrides?.endDate   ?? toDateStr(project.end_date);
   const effectiveCadence = projectOverrides?.cadence ?? project.cadence;
 
   const targetProject = { startDate, endDate, cadence: effectiveCadence };
@@ -475,8 +474,8 @@ export const simulationService = {
     for (const pid of projectIds) {
       const proj = await projectRepo.findById(pid);
       if (!proj) continue;
-      const sd = toDateString(proj.start_date);
-      const ed = toDateString(proj.end_date);
+      const sd = toDateStr(proj.start_date);
+      const ed = toDateStr(proj.end_date);
       const allocs = await projectRepo.getAllocations(pid);
       batchExisting.set(pid, allocs.map((a) => ({
         consultantId: a.consultant_id,
@@ -505,8 +504,8 @@ export const simulationService = {
         continue;
       }
 
-      const startDate = toDateString(project.start_date);
-      const endDate = toDateString(project.end_date);
+      const startDate = toDateStr(project.start_date);
+      const endDate = toDateStr(project.end_date);
 
       // Constraints = DB base + existing allocs of sibling projects NOT yet processed
       // (once processed, their allocs are in `tentative` — avoid double-counting)

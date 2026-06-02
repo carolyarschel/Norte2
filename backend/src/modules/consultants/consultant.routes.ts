@@ -11,7 +11,7 @@ const freeDaysRefinement = (d: { maxDays?: number; restrictions?: number[] }) =>
 };
 const freeDaysError = (d: { maxDays?: number; restrictions?: number[] }) => ({
   message: `maxDays (${d.maxDays}) não pode exceder os dias livres (${5 - (d.restrictions?.length ?? 0)})`,
-  path: ["maxDays"] as const,
+  path: ["maxDays"],
 });
 
 const createSchema = z.object({
@@ -19,7 +19,9 @@ const createSchema = z.object({
   level:        z.enum(["junior", "pleno", "senior"]),
   isLeader:     z.boolean().default(false),
   maxDays:      z.number().int().min(1).max(5).default(5),
-  restrictions: z.array(z.number().int().min(1).max(5)).default([]),
+  restrictions: z.array(z.number().int().min(1).max(5))
+    .refine((arr) => arr.length === new Set(arr).size, { message: "Restrições contêm dias duplicados" })
+    .default([]),
 }).refine(freeDaysRefinement, freeDaysError);
 
 const updateSchema = z.object({
@@ -27,7 +29,9 @@ const updateSchema = z.object({
   level:        z.enum(["junior", "pleno", "senior"]).optional(),
   isLeader:     z.boolean().optional(),
   maxDays:      z.number().int().min(1).max(5).optional(),
-  restrictions: z.array(z.number().int().min(1).max(5)).optional(),
+  restrictions: z.array(z.number().int().min(1).max(5))
+    .refine((arr) => arr.length === new Set(arr).size, { message: "Restrições contêm dias duplicados" })
+    .optional(),
 }).refine(freeDaysRefinement, freeDaysError);
 
 export const consultantRoutes = Router();

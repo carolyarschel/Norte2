@@ -100,7 +100,7 @@ export const projectRepo = {
     visit_days: number[]; leader_consultant_id: number | null;
   }>): Promise<ProjectRow | null> {
     const sets: string[] = [];
-    const vals: any[] = [];
+    const vals: unknown[] = [];
     let idx = 1;
 
     if (data.acronym !== undefined)               { sets.push(`acronym = $${idx++}`);                vals.push(data.acronym); }
@@ -146,7 +146,7 @@ export const projectRepo = {
 
       // Build dynamic SET clause for project fields
       const sets: string[] = [];
-      const vals: any[] = [];
+      const vals: unknown[] = [];
       let idx = 1;
       if (fields.acronym !== undefined)             { sets.push(`acronym = $${idx++}`);              vals.push(fields.acronym); }
       if (fields.client !== undefined)              { sets.push(`client = $${idx++}`);               vals.push(fields.client); }
@@ -278,6 +278,7 @@ export const projectRepo = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SET LOCAL statement_timeout = '30s'");
 
       // Remove old allocations for this project
       await client.query("DELETE FROM allocations WHERE project_id = $1", [projectId]);
@@ -352,11 +353,11 @@ export const projectRepo = {
         [projectId],
       );
 
-      const { rows: pinnedCons } = await client.query(
+      const { rows: pinnedCons } = await client.query<{ consultant_id: number }>(
         `SELECT consultant_id FROM pinned_slots WHERE project_id = $1`,
         [projectId],
       );
-      const pinnedIds = new Set<number>(pinnedCons.map((r: any) => r.consultant_id as number));
+      const pinnedIds = new Set<number>(pinnedCons.map((r) => r.consultant_id));
 
       // Group non-pinned allocations by consultant
       const nonPinnedMap = new Map<number, { days: number[]; isLeader: boolean }>();

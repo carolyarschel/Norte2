@@ -1,16 +1,50 @@
 services:
-  postgres:
+  db:
     image: postgres:16-alpine
-    container_name: alloc-postgres
-    restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
+      POSTGRES_DB: alloc-platform
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: alloc_platform
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-db:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d alloc-platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: alloc-platform
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      PORT: 3001
+      NODE_ENV: production
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_URL: http://backend:3001
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
 
 volumes:
-  pgdata:
+  postgres_data:

@@ -19,7 +19,7 @@ const pinnedSlotSchema = z.object({
 
 const dateOrderRefinement = (d: { startDate: string; endDate: string }) =>
   d.startDate <= d.endDate;
-const dateOrderError = { message: "startDate deve ser anterior ou igual a endDate", path: ["endDate"] as const };
+const dateOrderError = { message: "startDate deve ser anterior ou igual a endDate", path: ["endDate"] };
 
 const createSchema = z.object({
   acronym:     z.string().min(1).max(5),

@@ -17,13 +17,13 @@ pool.on("error", (err) => {
 });
 
 /** Convenience: run a query and return rows */
-export async function query<T = any>(text: string, params?: any[]): Promise<T[]> {
-  const result = await pool.query(text, params);
+export async function query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]> {
+  const result = await pool.query(text, params as unknown[]);
   return result.rows as T[];
 }
 
 /** Convenience: run a query and return first row or null */
-export async function queryOne<T = any>(text: string, params?: any[]): Promise<T | null> {
+export async function queryOne<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T | null> {
   const rows = await query<T>(text, params);
   return rows[0] ?? null;
 }

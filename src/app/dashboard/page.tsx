@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useAppStore } from "@/store/useAppStore";
-import { detectConflicts, getISOWeek } from "@/lib/domain";
+import { detectConflicts, getISOWeek, DAY_NAMES } from "@/lib/domain";
+import { StatusBadge } from "@/components/ui";
 import { isWorkingDay } from "@/lib/holidays";
 
 const MONTH_ABBR = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
@@ -76,6 +77,37 @@ export default function DashboardPage() {
   const confirmed = projects.filter((p) => p.status === "confirmed");
   const hot       = projects.filter((p) => p.status === "hot");
   const conflicts = detectConflicts(projects);
+
+  const conflictGroups = [
+    {
+      label: "Entre Confirmados",
+      description: "projetos já confirmados compartilham consultores no mesmo dia",
+      headerColor: "#c0392b",
+      rowBg: "#fdf1f0",
+      rowBorder: "#f5b7b1",
+      items: conflicts.filter((c) => c.a.status === "confirmed" && c.b.status === "confirmed"),
+    },
+    {
+      label: "Confirmados × Prospectos",
+      description: "projeto confirmado e prospecto disputam os mesmos consultores",
+      headerColor: "#d35400",
+      rowBg: "#fef5e7",
+      rowBorder: "#f9e4b7",
+      items: conflicts.filter(
+        (c) =>
+          (c.a.status === "confirmed" && c.b.status !== "confirmed") ||
+          (c.b.status === "confirmed" && c.a.status !== "confirmed"),
+      ),
+    },
+    {
+      label: "Entre Prospectos",
+      description: "dois prospectos disputam os mesmos consultores",
+      headerColor: "#7d6608",
+      rowBg: "#fefdf0",
+      rowBorder: "#f5eea0",
+      items: conflicts.filter((c) => c.a.status !== "confirmed" && c.b.status !== "confirmed"),
+    },
+  ].filter((g) => g.items.length > 0);
 
   const monthlyOcc = computeMonthlyOccupancy(consultants, projects, occMonth);
 
@@ -174,16 +206,71 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Conflict banner */}
+      {/* Conflict section */}
       {conflicts.length > 0 && (
-        <div className="conflict-banner">
-          <span style={{ fontSize: 18 }}>⚠️</span>
-          <div>
-            <strong style={{ color: "var(--red)" }}>{conflicts.length} conflito(s) detectado(s)</strong>
-            <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
-              {conflicts.map((c) => `${c.a.acronym} × ${c.b.acronym}`).join("  ·  ")}
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+            <div className="card-title" style={{ margin: 0, color: "var(--red)" }}>
+              Conflitos Detectados
             </div>
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
+              background: "#fdf1f0", color: "var(--red)", border: "1px solid #f5b7b1",
+            }}>
+              {conflicts.length}
+            </span>
           </div>
+
+          {conflictGroups.map((group) => (
+            <div key={group.label} style={{ marginBottom: 16 }}>
+              <div style={{
+                fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: ".06em", color: group.headerColor,
+                marginBottom: 6, display: "flex", alignItems: "center", gap: 8,
+              }}>
+                {group.label}
+                <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "var(--muted)", fontSize: 11 }}>
+                  — {group.description}
+                </span>
+              </div>
+
+              {group.items.map((conflict, i) => {
+                const sharedNames = conflict.sharedConsultants
+                  .map((id) => consultants.find((c) => c.id === id)?.name ?? `#${id}`)
+                  .join(", ");
+                const days = conflict.sharedDays.map((d) => DAY_NAMES[d]).join(", ");
+                return (
+                  <div key={i} style={{
+                    display: "flex", alignItems: "flex-start", gap: 12,
+                    padding: "9px 12px", borderRadius: 6, marginBottom: 6,
+                    background: group.rowBg, border: `1px solid ${group.rowBorder}`,
+                  }}>
+                    <div style={{
+                      width: 6, height: 6, borderRadius: "50%", marginTop: 5, flexShrink: 0,
+                      background: conflict.severity === "high" ? "#c0392b" : "#e67e22",
+                    }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+                        <span style={{ fontFamily: "var(--font-hd)", fontWeight: 800, color: "var(--red)", fontSize: 13 }}>
+                          {conflict.a.acronym}
+                        </span>
+                        <StatusBadge status={conflict.a.status} />
+                        <span style={{ color: "var(--muted)", fontSize: 12 }}>×</span>
+                        <span style={{ fontFamily: "var(--font-hd)", fontWeight: 800, color: "var(--red)", fontSize: 13 }}>
+                          {conflict.b.acronym}
+                        </span>
+                        <StatusBadge status={conflict.b.status} />
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", gap: 16 }}>
+                        <span>{sharedNames}</span>
+                        <span style={{ fontWeight: 600, color: "#555" }}>{days}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
 

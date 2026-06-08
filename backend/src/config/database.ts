@@ -1,5 +1,9 @@
-import { Pool } from "pg";
+import { Pool, types } from "pg";
 import { env } from "./env";
+
+// pg@8 parses DATE columns as JavaScript Date objects by default.
+// Override to keep the raw "YYYY-MM-DD" string from PostgreSQL.
+types.setTypeParser(1082, (val: string) => val);
 
 export const pool = new Pool({
   host:     env.DB_HOST,

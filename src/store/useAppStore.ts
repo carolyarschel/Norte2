@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { Consultant, Project } from "@/types";
+import type { Consultant, Project, Absence } from "@/types";
 import { api } from "@/lib/api";
 
 export interface ProposedAllocation {
@@ -44,9 +44,14 @@ export interface ScheduleEntry {
 interface AppState {
   consultants: Consultant[];
   projects: Project[];
+  absences: Absence[];
   loading: boolean;
 
   fetchAll: () => Promise<void>;
+
+  addAbsence: (data: Omit<Absence, "id">) => Promise<void>;
+  updateAbsence: (id: number, data: Partial<Absence>) => Promise<void>;
+  removeAbsence: (id: number) => Promise<void>;
 
   addConsultant: (c: Omit<Consultant, "id">) => Promise<void>;
   updateConsultant: (id: number, data: Partial<Consultant>) => Promise<void>;
@@ -80,20 +85,35 @@ interface AppState {
 export const useAppStore = create<AppState>()((set) => ({
   consultants: [],
   projects: [],
+  absences: [],
   loading: false,
 
   fetchAll: async () => {
     set({ loading: true });
     try {
-      const [consultants, projects] = await Promise.all([
+      const [consultants, projects, absences] = await Promise.all([
         api.consultants.list(),
         api.projects.list(),
+        api.absences.list(),
       ]);
-      set({ consultants, projects, loading: false });
+      set({ consultants, projects, absences, loading: false });
     } catch (err) {
       console.error("Failed to fetch data:", err);
       set({ loading: false });
     }
+  },
+
+  addAbsence: async (data) => {
+    const created = await api.absences.create(data);
+    set((s) => ({ absences: [...s.absences, created] }));
+  },
+  updateAbsence: async (id, data) => {
+    const updated = await api.absences.update(id, data);
+    set((s) => ({ absences: s.absences.map((a) => (a.id === id ? updated : a)) }));
+  },
+  removeAbsence: async (id) => {
+    await api.absences.remove(id);
+    set((s) => ({ absences: s.absences.filter((a) => a.id !== id) }));
   },
 
   addConsultant: async (c) => {
@@ -137,7 +157,11 @@ export const useAppStore = create<AppState>()((set) => ({
 
   confirmAndAllocate: async (projectId, allocations) => {
     await api.projects.setAllocations(projectId, allocations);
-    const confirmed = await api.projects.update(projectId, { status: "confirmed" });
+    const leaderAlloc = allocations.find((a) => a.role === "lider");
+    const confirmed = await api.projects.update(projectId, {
+      status: "confirmed",
+      leaderId: leaderAlloc?.consultantId ?? null,
+    });
     set((s) => ({
       projects: s.projects.map((p) => (p.id === projectId ? confirmed : p)),
     }));

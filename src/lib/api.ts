@@ -65,6 +65,14 @@ export const api = {
     ) => post(`${BASE}/simulation`, { projectIds, randomize, extraCommitted }),
   },
 
+  absences: {
+    list:    ()                              => get(`${BASE}/absences`),
+    listByConsultant: (consultantId: number) => get(`${BASE}/absences/consultant/${consultantId}`),
+    create:  (data: object)                  => post(`${BASE}/absences`, data),
+    update:  (id: number, data: object)      => put(`${BASE}/absences/${id}`, data),
+    remove:  (id: number)                    => del(`${BASE}/absences/${id}`),
+  },
+
   // ── Scheduling ─────────────────────────────────────────────────────────────
   scheduling: {
     /**

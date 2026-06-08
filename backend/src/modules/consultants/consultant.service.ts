@@ -10,6 +10,7 @@ function toDTO(row: ConsultantRow) {
     isLeader:     row.is_leader,
     maxDays:      row.max_days,
     restrictions: row.restrictions,
+    notes:        row.notes ?? null,
   };
 }
 
@@ -31,6 +32,7 @@ export const consultantService = {
     isLeader: boolean;
     maxDays: number;
     restrictions: number[];
+    notes?: string | null;
   }) {
     const row = await consultantRepo.create({
       name:         data.name,
@@ -38,6 +40,7 @@ export const consultantService = {
       is_leader:    data.isLeader,
       max_days:     data.maxDays,
       restrictions: data.restrictions,
+      notes:        data.notes,
     });
     return toDTO(row);
   },
@@ -48,17 +51,21 @@ export const consultantService = {
     isLeader: boolean;
     maxDays: number;
     restrictions: number[];
+    notes: string | null;
   }>) {
     const existing = await consultantRepo.findById(id);
     if (!existing) throw new NotFoundError("Consultor", id);
 
-    const row = await consultantRepo.update(id, {
+    const updateData: Parameters<typeof consultantRepo.update>[1] = {
       name:         data.name,
       level:        data.level,
       is_leader:    data.isLeader,
       max_days:     data.maxDays,
       restrictions: data.restrictions,
-    });
+    };
+    if ("notes" in data) updateData.notes = data.notes;
+
+    const row = await consultantRepo.update(id, updateData);
     return toDTO(row!);
   },
 

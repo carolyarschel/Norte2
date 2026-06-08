@@ -11,6 +11,7 @@ export interface ProjectRow {
   cadence: string;
   visit_days: number[];
   leader_consultant_id: number | null;
+  notes: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -84,12 +85,12 @@ export const projectRepo = {
   async create(data: {
     acronym: string; client: string; status: string;
     start_date: string; end_date: string; cadence: string;
-    visit_days: number[];
+    visit_days: number[]; notes?: string | null;
   }): Promise<ProjectRow> {
     const [row] = await query<ProjectRow>(
-      `INSERT INTO projects (acronym, client, status, start_date, end_date, cadence, visit_days)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [data.acronym, data.client, data.status, data.start_date, data.end_date, data.cadence, data.visit_days]
+      `INSERT INTO projects (acronym, client, status, start_date, end_date, cadence, visit_days, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [data.acronym, data.client, data.status, data.start_date, data.end_date, data.cadence, data.visit_days, data.notes ?? null]
     );
     return row;
   },
@@ -98,6 +99,7 @@ export const projectRepo = {
     acronym: string; client: string; status: string;
     start_date: string; end_date: string; cadence: string;
     visit_days: number[]; leader_consultant_id: number | null;
+    notes: string | null;
   }>): Promise<ProjectRow | null> {
     const sets: string[] = [];
     const vals: unknown[] = [];
@@ -111,6 +113,7 @@ export const projectRepo = {
     if (data.cadence !== undefined)               { sets.push(`cadence = $${idx++}`);                vals.push(data.cadence); }
     if (data.visit_days !== undefined)            { sets.push(`visit_days = $${idx++}`);             vals.push(data.visit_days); }
     if ("leader_consultant_id" in data)           { sets.push(`leader_consultant_id = $${idx++}`);   vals.push(data.leader_consultant_id ?? null); }
+    if ("notes" in data)                          { sets.push(`notes = $${idx++}`);                  vals.push(data.notes ?? null); }
 
     if (!sets.length) return this.findById(id);
 
@@ -133,7 +136,7 @@ export const projectRepo = {
     fields: Partial<{
       acronym: string; client: string; status: string;
       start_date: string; end_date: string; cadence: string;
-      leader_consultant_id: number | null;
+      leader_consultant_id: number | null; notes: string | null;
     }>,
     slots?: {
       levelSlots: { level: string; is_leader: boolean; days_per_week: number; visit_days: number[] }[];
@@ -155,6 +158,7 @@ export const projectRepo = {
       if (fields.end_date !== undefined)            { sets.push(`end_date = $${idx++}`);             vals.push(fields.end_date); }
       if (fields.cadence !== undefined)             { sets.push(`cadence = $${idx++}`);              vals.push(fields.cadence); }
       if ("leader_consultant_id" in fields)         { sets.push(`leader_consultant_id = $${idx++}`); vals.push(fields.leader_consultant_id ?? null); }
+      if ("notes" in fields)                        { sets.push(`notes = $${idx++}`);                vals.push(fields.notes ?? null); }
 
       let row: ProjectRow | null = null;
       if (sets.length) {

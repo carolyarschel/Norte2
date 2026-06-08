@@ -16,7 +16,7 @@ const MONTH_NAMES = [
 ];
 
 export default function CalendarPage() {
-  const { consultants, projects } = useAppStore();
+  const { consultants, projects, absences } = useAppStore();
   const [weekStart, setWeekStart] = useState(() =>
     getMondayOfWeek(new Date())
   );
@@ -56,11 +56,9 @@ export default function CalendarPage() {
         const alloc = (p.allocations ?? []).find(
           (a) => a.consultantId === consultantId && a.weekday === weekday
         );
-        const c = consultants.find((x) => x.id === consultantId)!;
-        const isLeader = p.pinnedSlots?.some((s) => s.consultantId === consultantId) && c.isLeader;
         return {
           project: p,
-          role: alloc?.role === "lider" || alloc?.role === "líder" ? "Líder" : alloc?.role === "consultor" ? "Consultor" : (isLeader ? "Líder" : "Consultor"),
+          role: alloc?.role === "lider" || alloc?.role === "líder" ? "Líder" : "Consultor",
           color: getProjectColor(p.id, projects),
         };
       });
@@ -72,6 +70,14 @@ export default function CalendarPage() {
     const d = date.getDay();
     const wd: Weekday = (d === 0 ? 7 : d) as Weekday;
     return c.restrictions.includes(wd);
+  }
+
+  function isAbsent(consultantId: number, date: Date): string | null {
+    const dateStr = date.toISOString().slice(0, 10);
+    const abs = absences.find(
+      (a) => a.consultantId === consultantId && a.startDate <= dateStr && a.endDate >= dateStr
+    );
+    return abs ? (abs.reason ?? "Ausência") : null;
   }
 
   return (
@@ -135,10 +141,19 @@ export default function CalendarPage() {
                   {weekDays.map((d, di) => {
                     const chips      = getChips(c.id, d);
                     const restricted = isRestricted(c.id, d);
+                    const absReason  = isAbsent(c.id, d);
                     return (
                       <td key={di}>
-                        <div className={`cal-cell${restricted && !chips.length ? " restricted" : ""}`}>
-                          {!chips.length && restricted && (
+                        <div className={`cal-cell${restricted && !chips.length && !absReason ? " restricted" : ""}`}
+                          style={absReason ? { background: "rgba(231,76,60,0.07)" } : undefined}>
+                          {absReason && (
+                            <div style={{
+                              fontSize: 9, color: "#c0392b", fontWeight: 600,
+                              padding: "2px 4px", borderBottom: "1px dashed rgba(231,76,60,0.3)",
+                              marginBottom: 2,
+                            }} title={absReason}>🚫 {absReason.length > 12 ? absReason.slice(0, 12) + "…" : absReason}</div>
+                          )}
+                          {!chips.length && !absReason && restricted && (
                             <span className="restricted-dot" title="Dia restrito" />
                           )}
                           {chips.map((ch, chi) => (

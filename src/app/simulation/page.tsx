@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { useAppStore, SimulationResult, ProposedAllocation } from "@/store/useAppStore";
 import {
   getProjectColor, isFullyAllocated,
@@ -20,8 +20,30 @@ export default function SimulationPage() {
   const [simError, setSimError] = useState<string | null>(null);
   const [previewWeekStart, setPreviewWeekStart] = useState(() => getMondayOfWeek(new Date()));
 
-  const active = projects.filter((p) => p.status !== "archived");
-  const simulatable = active.filter((p) => !(p.status === "confirmed" && isFullyAllocated(p)));
+  // When sim results arrive, auto-navigate to the earliest selected project's start week
+  // so the user doesn't have to manually scroll to find the dashed chips.
+  useEffect(() => {
+    if (!selectedIds.length || !Object.keys(simResults).length) return;
+    const startDates = selectedIds
+      .map((id) => projects.find((p) => p.id === id)?.startDate)
+      .filter((d): d is string => !!d);
+    if (!startDates.length) return;
+    const earliest = startDates.reduce((min, d) => (d < min ? d : min));
+    const targetMonday = getMondayOfWeek(new Date(earliest));
+    setPreviewWeekStart((cur) => (cur < targetMonday ? targetMonday : cur));
+  }, [simResults]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const consultantIndexMap = useMemo(
+    () => new Map(consultants.map((c, i) => [c.id, i])),
+    [consultants],
+  );
+
+  const simulatable = useMemo(
+    () => projects
+      .filter((p) => p.status !== "archived")
+      .filter((p) => !isFullyAllocated(p)),
+    [projects],
+  );
 
   // ── Batch-simulate a given list of projects together ─────────────────────
   // Always simulate as a batch so projects at the end of the list respect the
@@ -251,9 +273,43 @@ export default function SimulationPage() {
     return chips;
   }
 
+  // ── Simular Todos: auto-select + simulate + apply all feasible ───────────
+
+  const [globalSimLoading, setGlobalSimLoading] = useState(false);
+  const [globalSimStatus, setGlobalSimStatus]   = useState<string | null>(null);
+
+  const handleSimulateAll = useCallback(async () => {
+    const targets = simulatable.map((p) => p.id);
+    if (!targets.length) return;
+
+    setGlobalSimLoading(true);
+    setGlobalSimStatus("Simulando...");
+    setSimError(null);
+
+    try {
+      const allIds = [...new Set([...selectedIds, ...targets])];
+      setSelectedIds(allIds);
+
+      const results = await runSimulationBatch(allIds.filter((id) => !appliedIds.has(id)));
+      setSimResults((prev) => ({ ...prev, ...results }));
+
+      const feasibleCount = allIds.filter((id) => results[id]?.feasible).length;
+      setGlobalSimStatus(
+        feasibleCount > 0
+          ? `Simulação concluída — ${feasibleCount} projeto${feasibleCount === 1 ? "" : "s"} viável${feasibleCount === 1 ? "" : "s"}. Use "Alocar pessoas" para confirmar.`
+          : `Simulação concluída. Nenhum projeto viável encontrado.`,
+      );
+    } catch (err: any) {
+      setSimError(err.message ?? "Erro na simulação global");
+      setGlobalSimStatus(null);
+    } finally {
+      setGlobalSimLoading(false);
+    }
+  }, [simulatable, selectedIds, appliedIds, runSimulationBatch]);
+
   // ── Derived ───────────────────────────────────────────────────────────────
 
-  const anyLoading = applyLoading || loadingIds.size > 0;
+  const anyLoading = applyLoading || loadingIds.size > 0 || globalSimLoading;
   const feasibleCount = selectedIds.filter((id) => !appliedIds.has(id) && simResults[id]?.feasible).length;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -261,7 +317,22 @@ export default function SimulationPage() {
   return (
     <>
       <div className="topbar">
-        <div className="topbar-title">Simulação</div>
+        <div>
+          <div className="topbar-title">Simulação</div>
+          {globalSimStatus && (
+            <div className="topbar-sub" style={{ color: globalSimStatus.startsWith("✅") ? "#1e8449" : "var(--muted)" }}>
+              {globalSimStatus}
+            </div>
+          )}
+        </div>
+        <button
+          className="btn btn-primary"
+          onClick={handleSimulateAll}
+          disabled={anyLoading || simulatable.length === 0}
+          title="Selecionar e simular todos os projetos não completamente alocados"
+        >
+          {globalSimLoading ? "Simulando..." : "Simular Todos"}
+        </button>
       </div>
 
       <div className="page-content">
@@ -460,7 +531,7 @@ export default function SimulationPage() {
                               grouped.get(a.consultantId)!.push(a);
                             }
                             return Array.from(grouped.entries()).map(([cId, allocs]) => {
-                              const ci = consultants.findIndex((c) => c.id === cId);
+                              const ci = consultantIndexMap.get(cId) ?? 0;
                               return (
                                 <div key={cId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
                                   <Avatar name={allocs[0].consultantName} index={ci >= 0 ? ci : 0} size={28} />
@@ -561,7 +632,7 @@ export default function SimulationPage() {
                       </tr>
                     ) : (
                       relevantConsultants.map((c) => {
-                        const ci = consultants.indexOf(c);
+                        const ci = consultantIndexMap.get(c.id) ?? 0;
                         return (
                           <tr key={c.id}>
                             <td style={{ padding: "8px 10px", background: "var(--surface)" }}>

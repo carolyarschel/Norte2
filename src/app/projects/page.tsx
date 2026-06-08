@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { DAY_NAMES, CADENCE_LABELS, LEVEL_LABELS, consultantBusyDays } from "@/lib/domain";
 import { Avatar, StatusBadge, ChipGroup } from "@/components/ui";
@@ -22,6 +22,7 @@ type FormPinnedSlot = {
   daysPerWeek: number;
   visitDays: Weekday[];
   cadence: string | null; // null = inherit project cadence
+  _role?: string;         // preserved when editing confirmed+allocated (lider | consultor)
 };
 
 type FormState = {
@@ -31,6 +32,7 @@ type FormState = {
   startDate: string;
   endDate: string;
   cadence: Cadence;
+  notes: string;
   levelSlots: FormLevelSlot[];
   pinnedSlots: FormPinnedSlot[];
 };
@@ -38,7 +40,7 @@ type FormState = {
 const EMPTY_FORM: FormState = {
   acronym: "", client: "", status: "cold",
   startDate: "", endDate: "", cadence: "weekly",
-  levelSlots: [], pinnedSlots: [],
+  notes: "", levelSlots: [], pinnedSlots: [],
 };
 
 type FilterValue = ProjectStatus | "all" | "finalized";
@@ -50,11 +52,11 @@ const STATUS_FILTERS: [FilterValue, string][] = [
 const LEVEL_OPTIONS: ConsultantLevel[] = ["junior","pleno","senior"];
 
 function newLevelSlot(): FormLevelSlot {
-  return { id: String(Date.now() + Math.random()), level: "pleno", isLeader: false, daysPerWeek: 1, visitDays: [] };
+  return { id: crypto.randomUUID(), level: "pleno", isLeader: false, daysPerWeek: 1, visitDays: [] };
 }
 
 function newPinnedSlot(): FormPinnedSlot {
-  return { id: String(Date.now() + Math.random()), consultantId: null, daysPerWeek: 1, visitDays: [], cadence: null };
+  return { id: crypto.randomUUID(), consultantId: null, daysPerWeek: 1, visitDays: [], cadence: null };
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -121,13 +123,22 @@ function DaySelector({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProjectsPage() {
-  const { consultants, projects, addProject, updateProject, setProjectStatus, removeProject, setProjectLeader } = useAppStore();
+  const { consultants, projects, addProject, updateProject, setProjectStatus, removeProject, setProjectLeader, confirmAndAllocate } = useAppStore();
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [filter, setFilter] = useState<FilterValue>("all");
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  const consultantMap = useMemo(
+    () => new Map(consultants.map((c) => [c.id, c])),
+    [consultants],
+  );
+  const consultantIndexMap = useMemo(
+    () => new Map(consultants.map((c, i) => [c.id, i])),
+    [consultants],
+  );
 
   function openNew() {
     setEditingId(null);
@@ -137,6 +148,34 @@ export default function ProjectsPage() {
 
   function openEdit(p: Project) {
     setEditingId(p.id);
+    const confirmedWithAllocs = p.status === "confirmed" && (p.allocations ?? []).length > 0;
+
+    // When confirmed+allocated: build slots from actual allocations grouped by consultant
+    const pinnedSlots: FormPinnedSlot[] = confirmedWithAllocs
+      ? (() => {
+          const byConsultant = new Map<number, { weekdays: Weekday[]; role: string }>();
+          for (const a of p.allocations!) {
+            if (!byConsultant.has(a.consultantId))
+              byConsultant.set(a.consultantId, { weekdays: [], role: a.role });
+            byConsultant.get(a.consultantId)!.weekdays.push(a.weekday as Weekday);
+          }
+          return Array.from(byConsultant.entries()).map(([cId, { weekdays, role }]) => ({
+            id: crypto.randomUUID(),
+            consultantId: cId,
+            daysPerWeek: weekdays.length,
+            visitDays: ([...weekdays].sort() as Weekday[]),
+            cadence: null,
+            _role: role,
+          }));
+        })()
+      : (p.pinnedSlots ?? []).map((s) => ({
+          id: crypto.randomUUID(),
+          consultantId: s.consultantId,
+          daysPerWeek: s.daysPerWeek,
+          visitDays: s.visitDays,
+          cadence: s.cadence ?? null,
+        }));
+
     setForm({
       acronym: p.acronym,
       client: p.client,
@@ -144,20 +183,17 @@ export default function ProjectsPage() {
       startDate: p.startDate,
       endDate: p.endDate,
       cadence: p.cadence,
-      levelSlots: (p.levelSlots ?? []).map((s) => ({
-        id: String(Date.now() + Math.random()),
-        level: s.level,
-        isLeader: s.isLeader,
-        daysPerWeek: s.daysPerWeek,
-        visitDays: s.visitDays,
-      })),
-      pinnedSlots: (p.pinnedSlots ?? []).map((s) => ({
-        id: String(Date.now() + Math.random()),
-        consultantId: s.consultantId,
-        daysPerWeek: s.daysPerWeek,
-        visitDays: s.visitDays,
-        cadence: s.cadence ?? null,
-      })),
+      notes: p.notes ?? "",
+      levelSlots: confirmedWithAllocs
+        ? []
+        : (p.levelSlots ?? []).map((s) => ({
+            id: crypto.randomUUID(),
+            level: s.level,
+            isLeader: s.isLeader,
+            daysPerWeek: s.daysPerWeek,
+            visitDays: s.visitDays,
+          })),
+      pinnedSlots,
     });
     setShowModal(true);
   }
@@ -208,38 +244,63 @@ export default function ProjectsPage() {
   async function save() {
     if (!form.acronym.trim() || !form.client.trim()) return;
 
-    const levelSlots: LevelSlot[] = form.levelSlots.map((s) => ({
-      level: s.level, isLeader: s.isLeader,
-      daysPerWeek: s.daysPerWeek, visitDays: s.visitDays,
-    }));
-
-    const pinnedSlots: PinnedSlot[] = form.pinnedSlots
-      .filter((s) => s.consultantId !== null)
-      .map((s) => ({
-        consultantId: s.consultantId!, daysPerWeek: s.daysPerWeek, visitDays: s.visitDays,
-        cadence: (s.cadence as import("@/types").Cadence | null) ?? null,
-      }));
-
-    const allDays = new Set<Weekday>([
-      ...levelSlots.flatMap((s) => s.visitDays),
-      ...pinnedSlots.flatMap((s) => s.visitDays),
-    ]);
-
-    const payload = {
-      acronym: form.acronym, client: form.client, status: form.status,
-      startDate: form.startDate, endDate: form.endDate, cadence: form.cadence,
-      levelSlots, pinnedSlots,
-      visitDays: Array.from(allDays).sort() as Weekday[],
-      allocatedConsultants: pinnedSlots.map((s) => s.consultantId),
-    };
+    const editingProject = editingId !== null ? projects.find((p) => p.id === editingId) : null;
+    const confirmedWithAllocs =
+      editingProject?.status === "confirmed" && (editingProject.allocations ?? []).length > 0;
 
     setSaving(true);
     setSaveError(null);
     try {
-      if (editingId !== null) {
-        await updateProject(editingId, payload);
+      if (editingId !== null && confirmedWithAllocs) {
+        // Update metadata only — do NOT replace slots to preserve the slot structure
+        await updateProject(editingId, {
+          acronym: form.acronym, client: form.client, status: form.status,
+          startDate: form.startDate, endDate: form.endDate,
+          cadence: form.cadence, notes: form.notes || null,
+        });
+
+        if (form.status === "confirmed") {
+          // Still confirmed — re-apply allocations from the edited pinned slots
+          const newAllocations = form.pinnedSlots
+            .filter((s) => s.consultantId !== null && s.visitDays.length > 0)
+            .flatMap((s) =>
+              s.visitDays.map((day) => ({
+                consultantId: s.consultantId!,
+                weekday: day,
+                role: s._role ?? "consultor",
+              }))
+            );
+          await confirmAndAllocate(editingId, newAllocations);
+        }
+        // If status changed away from "confirmed", allocations stay as-is (only metadata updated)
       } else {
-        await addProject(payload);
+        // Normal path: new project or non-confirmed
+        const levelSlots: LevelSlot[] = form.levelSlots.map((s) => ({
+          level: s.level, isLeader: s.isLeader,
+          daysPerWeek: s.daysPerWeek, visitDays: s.visitDays,
+        }));
+        const pinnedSlots: PinnedSlot[] = form.pinnedSlots
+          .filter((s) => s.consultantId !== null)
+          .map((s) => ({
+            consultantId: s.consultantId!, daysPerWeek: s.daysPerWeek, visitDays: s.visitDays,
+            cadence: (s.cadence as import("@/types").Cadence | null) ?? null,
+          }));
+        const allDays = new Set<Weekday>([
+          ...levelSlots.flatMap((s) => s.visitDays),
+          ...pinnedSlots.flatMap((s) => s.visitDays),
+        ]);
+        const payload = {
+          acronym: form.acronym, client: form.client, status: form.status,
+          startDate: form.startDate, endDate: form.endDate, cadence: form.cadence,
+          notes: form.notes || null, levelSlots, pinnedSlots,
+          visitDays: Array.from(allDays).sort() as Weekday[],
+          allocatedConsultants: pinnedSlots.map((s) => s.consultantId),
+        };
+        if (editingId !== null) {
+          await updateProject(editingId, payload);
+        } else {
+          await addProject(payload);
+        }
       }
       closeModal();
     } catch (err: any) {
@@ -297,7 +358,7 @@ export default function ProjectsPage() {
                     </div>
                   ))}
                   {(p.pinnedSlots ?? []).map((s, i) => {
-                    const c = consultants.find((x) => x.id === s.consultantId);
+                    const c = consultantMap.get(s.consultantId!);
                     const cadenceLabel = s.cadence
                       ? { weekly: "semanal", biweekly_odd: "quinzenal ímpar", biweekly_even: "quinzenal par" }[s.cadence] ?? s.cadence
                       : null;
@@ -325,10 +386,10 @@ export default function ProjectsPage() {
                 </div>
 
                 {(p.allocatedConsultants ?? []).length > 0 && (() => {
-                  const leader = p.leaderId ? consultants.find((c) => c.id === p.leaderId) : null;
+                  const leader = p.leaderId ? (consultantMap.get(p.leaderId) ?? null) : null;
                   const others = (p.allocatedConsultants ?? []).filter((id) => id !== p.leaderId);
                   const hasLeaderCandidates = (p.allocatedConsultants ?? []).some(
-                    (id) => consultants.find((c) => c.id === id)?.isLeader
+                    (id) => consultantMap.get(id)?.isLeader
                   );
                   return (
                     <div style={{ marginBottom: 10 }}>
@@ -345,7 +406,7 @@ export default function ProjectsPage() {
                             cursor: "pointer",
                           }}
                         >
-                          <Avatar name={leader.name} index={consultants.indexOf(leader)} size={24} />
+                          <Avatar name={leader.name} index={consultantIndexMap.get(leader.id) ?? 0} size={24} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--red)", lineHeight: 1.2 }}>
                               ★ {leader.name}
@@ -363,7 +424,7 @@ export default function ProjectsPage() {
                       {others.length > 0 && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
                           {others.map((cId) => {
-                            const c = consultants.find((x) => x.id === cId);
+                            const c = consultantMap.get(cId);
                             if (!c) return null;
                             const canLead = c.isLeader;
                             return (
@@ -373,7 +434,7 @@ export default function ProjectsPage() {
                                 onClick={canLead ? () => setProjectLeader(p.id, cId) : undefined}
                                 style={{ cursor: canLead ? "pointer" : "default" }}
                               >
-                                <Avatar name={c.name} index={consultants.indexOf(c)} size={24} />
+                                <Avatar name={c.name} index={consultantIndexMap.get(cId) ?? 0} size={24} />
                               </div>
                             );
                           })}
@@ -455,135 +516,185 @@ export default function ProjectsPage() {
                   <option value="biweekly_even">Quinzenal (semanas pares)</option>
                 </select>
               </div>
+              <div className="form-group full">
+                <label className="form-label">Notas</label>
+                <textarea className="form-input" rows={2}
+                  value={form.notes}
+                  onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                  placeholder="Observações sobre o projeto..."
+                  style={{ resize: "vertical" }}
+                />
+              </div>
             </div>
 
-            {/* ── Level slots ────────────────────────────────────────────── */}
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>Vagas por Nível</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Qualquer consultor que se encaixe no perfil</div>
-                </div>
-                <button className="btn btn-secondary btn-sm" onClick={addLevelSlot}>+ Adicionar vaga</button>
-              </div>
-
-              {form.levelSlots.length === 0 && (
-                <div style={{ fontSize: 12, color: "var(--muted)", padding: "12px 0" }}>Nenhuma vaga por nível adicionada.</div>
-              )}
-
-              {form.levelSlots.map((slot) => (
-                <div key={slot.id} style={{ background: "var(--bg)", borderRadius: 8, padding: 14, marginBottom: 10 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 10, alignItems: "end", marginBottom: 10 }}>
-                    <div className="form-group">
-                      <label className="form-label">Nível</label>
-                      <select className="form-select" value={slot.level}
-                        onChange={(e) => updateLevelSlot(slot.id, { level: e.target.value as ConsultantLevel })}>
-                        {LEVEL_OPTIONS.map((l) => <option key={l} value={l}>{LEVEL_LABELS[l]}</option>)}
-                      </select>
+            {/* ── Level slots (hidden for confirmed+allocated projects) ───── */}
+            {(() => {
+              const editingProject = editingId !== null ? projects.find((p) => p.id === editingId) : null;
+              const confirmedWithAllocs = editingProject?.status === "confirmed" && (editingProject.allocations ?? []).length > 0;
+              if (confirmedWithAllocs) return null;
+              return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>Vagas por Nível</div>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>Qualquer consultor que se encaixe no perfil</div>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label">Dias/semana</label>
-                      <input className="form-input" type="number" min={1} max={5} value={slot.daysPerWeek}
-                        onChange={(e) => updateLevelSlot(slot.id, { daysPerWeek: Number(e.target.value) })} />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Líder?</label>
-                      <div style={{ display: "flex", gap: 5, marginTop: 2 }}>
-                        {["Sim","Não"].map((o) => (
-                          <div key={o} className={`chip ${(o === "Sim") === slot.isLeader ? "selected" : ""}`}
-                            style={{ padding: "5px 10px", fontSize: 12 }}
-                            onClick={() => updateLevelSlot(slot.id, { isLeader: o === "Sim" })}>
-                            {o}
+                    <button className="btn btn-secondary btn-sm" onClick={addLevelSlot}>+ Adicionar vaga</button>
+                  </div>
+                  {form.levelSlots.length === 0 && (
+                    <div style={{ fontSize: 12, color: "var(--muted)", padding: "12px 0" }}>Nenhuma vaga por nível adicionada.</div>
+                  )}
+                  {form.levelSlots.map((slot) => (
+                    <div key={slot.id} style={{ background: "var(--bg)", borderRadius: 8, padding: 14, marginBottom: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 10, alignItems: "end", marginBottom: 10 }}>
+                        <div className="form-group">
+                          <label className="form-label">Nível</label>
+                          <select className="form-select" value={slot.level}
+                            onChange={(e) => updateLevelSlot(slot.id, { level: e.target.value as ConsultantLevel })}>
+                            {LEVEL_OPTIONS.map((l) => <option key={l} value={l}>{LEVEL_LABELS[l]}</option>)}
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Dias/semana</label>
+                          <input className="form-input" type="number" min={1} max={5} value={slot.daysPerWeek}
+                            onChange={(e) => updateLevelSlot(slot.id, { daysPerWeek: Number(e.target.value) })} />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Líder?</label>
+                          <div style={{ display: "flex", gap: 5, marginTop: 2 }}>
+                            {["Sim","Não"].map((o) => (
+                              <div key={o} className={`chip ${(o === "Sim") === slot.isLeader ? "selected" : ""}`}
+                                style={{ padding: "5px 10px", fontSize: 12 }}
+                                onClick={() => updateLevelSlot(slot.id, { isLeader: o === "Sim" })}>
+                                {o}
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        </div>
+                        <button className="btn btn-ghost btn-sm" style={{ alignSelf: "end" }}
+                          onClick={() => removeLevelSlot(slot.id)}>✕</button>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Dias preferidos <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(opcional — deixe em branco para a simulação decidir)</span></label>
+                        <DaySelector selected={slot.visitDays}
+                          onChange={(days) => updateLevelSlot(slot.id, { visitDays: days })} />
                       </div>
                     </div>
-                    <button className="btn btn-ghost btn-sm" style={{ alignSelf: "end" }}
-                      onClick={() => removeLevelSlot(slot.id)}>✕</button>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Dias preferidos <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(opcional — deixe em branco para a simulação decidir)</span></label>
-                    <DaySelector selected={slot.visitDays}
-                      onChange={(days) => updateLevelSlot(slot.id, { visitDays: days })} />
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              );
+            })()}
 
-            {/* ── Pinned slots ───────────────────────────────────────────── */}
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>Consultores Específicos</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Quando o projeto requer uma pessoa em particular</div>
-                </div>
-                <button className="btn btn-secondary btn-sm" onClick={addPinnedSlot}>+ Adicionar pessoa</button>
-              </div>
-
-              {form.pinnedSlots.length === 0 && (
-                <div style={{ fontSize: 12, color: "var(--muted)", padding: "12px 0" }}>Nenhum consultor específico requerido.</div>
-              )}
-
-              {form.pinnedSlots.map((slot) => {
-                const pinnedConsultant = slot.consultantId !== null
-                  ? consultants.find((c) => c.id === slot.consultantId)
-                  : undefined;
-                const restricted = (pinnedConsultant?.restrictions ?? []) as Weekday[];
-                const busy = pinnedConsultant
-                  ? (consultantBusyDays(pinnedConsultant.id, projects.filter(p => p.status === "confirmed")) as Weekday[])
-                  : [];
-
-                return (
-                  <div key={slot.id} style={{ background: "var(--bg)", borderRadius: 8, padding: 14, marginBottom: 10 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 10, alignItems: "end", marginBottom: 10 }}>
-                      <div className="form-group">
-                        <label className="form-label">Consultor</label>
-                        <select className="form-select" value={slot.consultantId ?? ""}
-                          onChange={(e) => updatePinnedSlot(slot.id, { consultantId: Number(e.target.value) || null, visitDays: [] })}>
-                          <option value="">Selecione...</option>
-                          {consultants.map((c) => (
-                            <option key={c.id} value={c.id}>{c.name} ({LEVEL_LABELS[c.level]})</option>
-                          ))}
-                        </select>
+            {/* ── Pinned slots / Equipe Alocada ──────────────────────────── */}
+            {(() => {
+              const editingProject = editingId !== null ? projects.find((p) => p.id === editingId) : null;
+              const confirmedWithAllocs = editingProject?.status === "confirmed" && (editingProject.allocations ?? []).length > 0;
+              return (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>
+                        {confirmedWithAllocs ? "Equipe Alocada" : "Consultores Específicos"}
                       </div>
-                      <div className="form-group">
-                        <label className="form-label">Frequência</label>
-                        <select className="form-select" value={slot.cadence ?? ""}
-                          onChange={(e) => updatePinnedSlot(slot.id, { cadence: (e.target.value as any) || null })}>
-                          <option value="">Igual ao projeto</option>
-                          <option value="weekly">Semanal</option>
-                          <option value="biweekly_odd">Quinzenal (ímpares)</option>
-                          <option value="biweekly_even">Quinzenal (pares)</option>
-                        </select>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        {confirmedWithAllocs
+                          ? "Pessoas alocadas neste projeto — edite os dias ou troque o consultor"
+                          : "Quando o projeto requer uma pessoa em particular"}
                       </div>
-                      <div className="form-group">
-                        <label className="form-label">Dias/sem</label>
-                        <input className="form-input" type="number" min={1}
-                          max={pinnedConsultant ? 5 - restricted.length : 5}
-                          value={slot.daysPerWeek}
-                          onChange={(e) => updatePinnedSlot(slot.id, { daysPerWeek: Number(e.target.value) })} />
-                      </div>
-                      <button className="btn btn-ghost btn-sm" style={{ alignSelf: "end" }}
-                        onClick={() => removePinnedSlot(slot.id)}>✕</button>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label">
-                        Dias{slot.consultantId ? "" : " preferidos"}{" "}
-                        <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                          {slot.consultantId ? "(selecione os dias exatos)" : "(opcional)"}
-                        </span>
-                      </label>
-                      <DaySelector
-                        selected={slot.visitDays}
-                        onChange={(days) => updatePinnedSlot(slot.id, { visitDays: days })}
-                        restricted={restricted}
-                        busy={busy}
-                      />
-                    </div>
+                    <button className="btn btn-secondary btn-sm" onClick={addPinnedSlot}>
+                      + {confirmedWithAllocs ? "Adicionar à equipe" : "Adicionar pessoa"}
+                    </button>
                   </div>
-                );
-              })}
-            </div>
+
+                  {form.pinnedSlots.length === 0 && (
+                    <div style={{ fontSize: 12, color: "var(--muted)", padding: "12px 0" }}>
+                      {confirmedWithAllocs ? "Nenhuma pessoa alocada." : "Nenhum consultor específico requerido."}
+                    </div>
+                  )}
+
+                  {form.pinnedSlots.map((slot) => {
+                    const pinnedConsultant = slot.consultantId !== null
+                      ? consultantMap.get(slot.consultantId)
+                      : undefined;
+                    const restricted = (pinnedConsultant?.restrictions ?? []) as Weekday[];
+                    const busy = pinnedConsultant
+                      ? (consultantBusyDays(
+                          pinnedConsultant.id,
+                          projects.filter((p) => p.status === "confirmed" && p.id !== editingId),
+                        ) as Weekday[])
+                      : [];
+
+                    return (
+                      <div key={slot.id} style={{ background: "var(--bg)", borderRadius: 8, padding: 14, marginBottom: 10 }}>
+                        <div style={{
+                          display: "grid",
+                          gridTemplateColumns: confirmedWithAllocs ? "1fr auto" : "1fr auto auto auto",
+                          gap: 10, alignItems: "end", marginBottom: 10,
+                        }}>
+                          <div className="form-group">
+                            <label className="form-label">Consultor</label>
+                            <select className="form-select" value={slot.consultantId ?? ""}
+                              onChange={(e) => updatePinnedSlot(slot.id, {
+                                consultantId: Number(e.target.value) || null,
+                                visitDays: [],
+                                _role: undefined,
+                              })}>
+                              <option value="">Selecione...</option>
+                              {consultants.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name} ({LEVEL_LABELS[c.level]})</option>
+                              ))}
+                            </select>
+                          </div>
+                          {!confirmedWithAllocs && (
+                            <div className="form-group">
+                              <label className="form-label">Frequência</label>
+                              <select className="form-select" value={slot.cadence ?? ""}
+                                onChange={(e) => updatePinnedSlot(slot.id, { cadence: (e.target.value as any) || null })}>
+                                <option value="">Igual ao projeto</option>
+                                <option value="weekly">Semanal</option>
+                                <option value="biweekly_odd">Quinzenal (ímpares)</option>
+                                <option value="biweekly_even">Quinzenal (pares)</option>
+                              </select>
+                            </div>
+                          )}
+                          {!confirmedWithAllocs && (
+                            <div className="form-group">
+                              <label className="form-label">Dias/sem</label>
+                              <input className="form-input" type="number" min={1}
+                                max={pinnedConsultant ? 5 - restricted.length : 5}
+                                value={slot.daysPerWeek}
+                                onChange={(e) => updatePinnedSlot(slot.id, { daysPerWeek: Number(e.target.value) })} />
+                            </div>
+                          )}
+                          <button className="btn btn-ghost btn-sm" style={{ alignSelf: "end" }}
+                            onClick={() => removePinnedSlot(slot.id)}>✕</button>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">
+                            {confirmedWithAllocs ? "Dias de visita" : (slot.consultantId ? "Dias" : "Dias preferidos")}{" "}
+                            <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                              {confirmedWithAllocs
+                                ? `(${slot.visitDays.length > 0 ? slot.visitDays.length + "x/sem" : "selecione os dias"})`
+                                : slot.consultantId ? "(selecione os dias exatos)" : "(opcional)"}
+                            </span>
+                          </label>
+                          <DaySelector
+                            selected={slot.visitDays}
+                            onChange={(days) => updatePinnedSlot(slot.id, {
+                              visitDays: days,
+                              daysPerWeek: days.length,
+                            })}
+                            restricted={restricted}
+                            busy={busy}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             <div className="modal-footer">
               {saveError && (

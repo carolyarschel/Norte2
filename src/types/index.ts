@@ -25,6 +25,14 @@ export interface PinnedSlot {
 
 // ─── Core entities ────────────────────────────────────────────────────────────
 
+export interface Absence {
+  id: number;
+  consultantId: number;
+  startDate: string;
+  endDate: string;
+  reason: string | null;
+}
+
 export interface Consultant {
   id: number;
   name: string;
@@ -32,6 +40,7 @@ export interface Consultant {
   isLeader: boolean;
   maxDays: number;
   restrictions: Weekday[];
+  notes?: string | null;
 }
 
 export interface Project {
@@ -43,6 +52,7 @@ export interface Project {
   endDate: string;
   cadence: Cadence;
   leaderId?: number | null;       // which allocated consultant is acting as project leader
+  notes?: string | null;
   // Demand definition (replaces old visitDays + requiredLeader + mandatoryConsultants)
   levelSlots: LevelSlot[];
   pinnedSlots: PinnedSlot[];
@@ -52,17 +62,17 @@ export interface Project {
   allocations?: { id: number; consultantId: number; weekday: number; role: string }[];
 }
 
-// ─── Derived / simulation types ───────────────────────────────────────────────
-
-export interface ConsultantLoad {
-  total: number;
-  projects: Project[];
-}
+// ─── Derived types ────────────────────────────────────────────────────────────
 
 export interface ChipColor {
   bg: string;
   border: string;
   text: string;
+}
+
+export interface ConsultantLoad {
+  total: number;
+  projects: Project[];
 }
 
 export interface ConflictEntry {
@@ -71,17 +81,4 @@ export interface ConflictEntry {
   sharedConsultants: number[];
   sharedDays: Weekday[];
   severity: "high" | "medium";
-}
-
-export interface SlotAllocation {
-  slot: LevelSlot | PinnedSlot;
-  consultant: Consultant;
-  days: Weekday[];
-}
-
-export interface SimulationResult {
-  feasible: boolean;
-  issues: string[];
-  suggestions: string[];
-  proposedAllocations: SlotAllocation[];
 }

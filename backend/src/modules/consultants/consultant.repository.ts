@@ -7,6 +7,7 @@ export interface ConsultantRow {
   is_leader: boolean;
   max_days: number;
   restrictions: number[];
+  notes: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -26,11 +27,12 @@ export const consultantRepo = {
     is_leader: boolean;
     max_days: number;
     restrictions: number[];
+    notes?: string | null;
   }): Promise<ConsultantRow> {
     const [row] = await query<ConsultantRow>(
-      `INSERT INTO consultants (name, level, is_leader, max_days, restrictions)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [data.name, data.level, data.is_leader, data.max_days, data.restrictions]
+      `INSERT INTO consultants (name, level, is_leader, max_days, restrictions, notes)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [data.name, data.level, data.is_leader, data.max_days, data.restrictions, data.notes ?? null]
     );
     return row;
   },
@@ -41,6 +43,7 @@ export const consultantRepo = {
     is_leader: boolean;
     max_days: number;
     restrictions: number[];
+    notes: string | null;
   }>): Promise<ConsultantRow | null> {
     const sets: string[] = [];
     const vals: any[] = [];
@@ -51,6 +54,7 @@ export const consultantRepo = {
     if (data.is_leader !== undefined)   { sets.push(`is_leader = $${idx++}`);    vals.push(data.is_leader); }
     if (data.max_days !== undefined)    { sets.push(`max_days = $${idx++}`);     vals.push(data.max_days); }
     if (data.restrictions !== undefined){ sets.push(`restrictions = $${idx++}`); vals.push(data.restrictions); }
+    if ("notes" in data)                { sets.push(`notes = $${idx++}`);        vals.push(data.notes ?? null); }
 
     if (!sets.length) return this.findById(id);
 

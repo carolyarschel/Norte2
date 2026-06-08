@@ -25,6 +25,7 @@ function projectToDTO(
     cadence:   row.cadence,
     visitDays: row.visit_days,
     leaderId:  row.leader_consultant_id ?? null,
+    notes:     row.notes ?? null,
     levelSlots: levelSlots.map((s) => ({
       id:                    s.id,
       level:                 s.level,
@@ -88,10 +89,12 @@ async function autoAllocatePinnedSlots(
   const withDays = pinnedSlots.filter((s) => s.visitDays.length > 0);
   if (!withDays.length) return;
 
+  const project = await projectRepo.findById(projectId);
+  const designatedLeaderId = project?.leader_consultant_id ?? null;
+
   const dbAllocations: { consultant_id: number; weekday: number; role: string }[] = [];
   for (const slot of withDays) {
-    const consultant = await consultantRepo.findById(slot.consultantId);
-    const role = consultant?.is_leader ? "lider" : "consultor";
+    const role = designatedLeaderId === slot.consultantId ? "lider" : "consultor";
     for (const day of slot.visitDays.slice(0, slot.daysPerWeek)) {
       dbAllocations.push({ consultant_id: slot.consultantId, weekday: day, role });
     }
@@ -136,6 +139,7 @@ export const projectService = {
   async create(data: {
     acronym: string; client: string; status?: string;
     startDate: string; endDate: string; cadence?: string;
+    notes?: string | null;
     levelSlots?: { level: string; isLeader: boolean; daysPerWeek: number; visitDays: number[] }[];
     pinnedSlots?: { consultantId: number; daysPerWeek: number; visitDays: number[]; cadence?: string | null }[];
   }) {
@@ -150,6 +154,7 @@ export const projectService = {
       end_date:   data.endDate,
       cadence:    data.cadence ?? "weekly",
       visit_days: [],
+      notes:      data.notes,
     });
 
     try {
@@ -199,7 +204,7 @@ export const projectService = {
   async update(id: number, data: Partial<{
     acronym: string; client: string; status: string;
     startDate: string; endDate: string; cadence: string;
-    leaderId: number | null;
+    leaderId: number | null; notes: string | null;
     levelSlots: { level: string; isLeader: boolean; daysPerWeek: number; visitDays: number[] }[];
     pinnedSlots: { consultantId: number; daysPerWeek: number; visitDays: number[]; cadence?: string | null }[];
   }>) {
@@ -214,6 +219,7 @@ export const projectService = {
       end_date:   data.endDate,
       cadence:    data.cadence,
       ...("leaderId" in data ? { leader_consultant_id: data.leaderId ?? null } : {}),
+      ...("notes" in data ? { notes: data.notes ?? null } : {}),
     };
 
     const slots = (data.levelSlots !== undefined || data.pinnedSlots !== undefined)
@@ -247,7 +253,11 @@ export const projectService = {
       }
     }
 
-    if (data.status === "confirmed") {
+    // Only auto-simulate when the project is TRANSITIONING to confirmed (e.g. hot → confirmed).
+    // Skip when it was already confirmed — that means we're doing a metadata-only edit or
+    // re-confirming after an explicit setAllocations call, and running the simulator would
+    // overwrite the allocations that were just set.
+    if (data.status === "confirmed" && existing.status !== "confirmed") {
       try {
         await autoSimulateAndAllocate(id, cadence);
       } catch (err: any) {

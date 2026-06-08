@@ -489,7 +489,7 @@ COPY public.pinned_slots (id, project_id, consultant_id, days_per_week, visit_da
 
 COPY public.projects (id, acronym, client, status, start_date, end_date, cadence, visit_days, created_at, updated_at, leader_consultant_id) FROM stdin;
 21	3GF	3G Foods	hot	2026-07-06	2027-02-12	weekly	{}	2026-06-01 10:11:00.590808-03	2026-06-01 14:28:35.67048-03	\N
-20	LDC	LDC CafÃ©	confirmed	2026-07-06	2027-06-06	biweekly_odd	{1,2,3,4}	2026-06-01 10:09:57.447732-03	2026-06-01 15:30:27.663296-03	\N
+20	LDC	LDC Café	confirmed	2026-07-06	2027-06-06	biweekly_odd	{1,2,3,4}	2026-06-01 10:09:57.447732-03	2026-06-01 15:30:27.663296-03	\N
 11	GEV	General Electric Vernova	confirmed	2026-03-02	2027-02-23	weekly	{1,2}	2026-06-01 09:45:07.743765-03	2026-06-01 14:50:03.459719-03	10
 12	VUL	Vulkan	confirmed	2025-10-06	2026-12-16	weekly	{1,3}	2026-06-01 09:46:09.841407-03	2026-06-01 14:50:08.729999-03	12
 26	IMC	Grupo IMC	hot	2026-07-06	2026-11-13	weekly	{1,2}	2026-06-01 10:46:44.148687-03	2026-06-01 10:46:44.195419-03	\N
@@ -497,10 +497,10 @@ COPY public.projects (id, acronym, client, status, start_date, end_date, cadence
 14	TEC	Tecnotam	confirmed	2025-09-29	2026-06-30	weekly	{2}	2026-06-01 09:47:34.227527-03	2026-06-01 14:50:15.342857-03	12
 15	ENG	Engetubo - Lean	confirmed	2026-02-10	2026-08-28	weekly	{2,5}	2026-06-01 09:48:26.77098-03	2026-06-01 14:50:18.008685-03	15
 16	ENG	Engetubo - Armazem	confirmed	2026-04-14	2026-09-15	weekly	{2,5}	2026-06-01 09:49:45.303002-03	2026-06-01 14:50:21.1327-03	14
-27	LIE	Lindsay - ExportaÃ§Ã£o	hot	2026-07-06	2026-08-10	weekly	{}	2026-06-01 10:48:18.651478-03	2026-06-01 10:50:21.801195-03	\N
+27	LIE	Lindsay - Exportação	hot	2026-07-06	2026-08-10	weekly	{}	2026-06-01 10:48:18.651478-03	2026-06-01 10:50:21.801195-03	\N
 17	VEI	Veiling	confirmed	2026-02-27	2026-08-28	weekly	{3,5}	2026-06-01 09:51:17.11696-03	2026-06-01 14:50:24.084737-03	10
 18	IND	Induscabos	confirmed	2025-10-02	2027-05-21	weekly	{4,5}	2026-06-01 09:53:09.436607-03	2026-06-01 14:50:27.784637-03	12
-24	GEL	Gelita - ManutenÃ§Ã£o	confirmed	2025-04-29	2027-12-16	biweekly_even	{3,4}	2026-06-01 10:14:14.289593-03	2026-06-01 14:50:34.185741-03	10
+24	GEL	Gelita - Manutenção	confirmed	2025-04-29	2027-12-16	biweekly_even	{3,4}	2026-06-01 10:14:14.289593-03	2026-06-01 14:50:34.185741-03	10
 25	VIA	Via Sudeste	confirmed	2026-03-26	2026-10-08	weekly	{4}	2026-06-01 10:14:55.629842-03	2026-06-01 14:50:36.241049-03	15
 29	CON	Conecta Cargo	confirmed	2026-06-02	2026-11-25	weekly	{2,3}	2026-06-01 10:54:46.745724-03	2026-06-01 14:50:52.124472-03	13
 22	GEL	Gelita - Retag	confirmed	2025-12-01	2026-08-27	biweekly_odd	{3,4}	2026-06-01 10:12:47.698989-03	2026-06-01 10:12:47.70785-03	\N

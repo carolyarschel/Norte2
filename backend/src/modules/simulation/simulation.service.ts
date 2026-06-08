@@ -282,11 +282,14 @@ async function runSimulation(
     days.forEach((d) => { if (!projectUsedDays.includes(d)) projectUsedDays.push(d); });
     lockPrimaryLeaderDays(days);
 
+    // "lider" only if this is the explicitly designated project leader;
+    // otherwise they're pinned as a regular consultant who happens to be leader-capable.
+    const role = (designatedLeaderId === null || c.id === designatedLeaderId) ? "lider" : "consultor";
     for (const d of days) {
       proposed.push({
         consultantId: c.id, consultantName: c.name, weekday: d,
-        role: "lider", slotType: "pinned",
-        slotDescription: `${c.name} (líder${slotCadence !== effectiveCadence ? " · " + CADENCE_SHORT[slotCadence] : ""})`,
+        role, slotType: "pinned",
+        slotDescription: `${c.name} (${role === "lider" ? "líder" : "consultor"}${slotCadence !== effectiveCadence ? " · " + CADENCE_SHORT[slotCadence] : ""})`,
         cadence: slotCadence,
       });
     }

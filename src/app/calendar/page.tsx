@@ -60,7 +60,7 @@ export default function CalendarPage() {
         const isLeader = p.pinnedSlots?.some((s) => s.consultantId === consultantId) && c.isLeader;
         return {
           project: p,
-          role: alloc?.role ?? (isLeader ? "Líder" : "Consultor"),
+          role: alloc?.role === "lider" || alloc?.role === "líder" ? "Líder" : alloc?.role === "consultor" ? "Consultor" : (isLeader ? "Líder" : "Consultor"),
           color: getProjectColor(p.id, projects),
         };
       });

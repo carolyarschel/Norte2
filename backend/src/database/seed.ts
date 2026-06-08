@@ -60,7 +60,7 @@ async function seed() {
 
   // Allocations for TDG
   await query(`INSERT INTO allocations (project_id, consultant_id, weekday, role) VALUES
-    ($1, 1, 1, 'líder'), ($1, 1, 3, 'líder'),
+    ($1, 1, 1, 'lider'), ($1, 1, 3, 'lider'),
     ($1, 3, 3, 'consultor'),
     ($1, 6, 1, 'consultor'), ($1, 6, 3, 'consultor')`, [tdg.id]);
 
@@ -83,7 +83,7 @@ async function seed() {
   );
 
   await query(`INSERT INTO allocations (project_id, consultant_id, weekday, role) VALUES
-    ($1, 2, 2, 'líder'), ($1, 2, 4, 'líder'),
+    ($1, 2, 2, 'lider'), ($1, 2, 4, 'lider'),
     ($1, 5, 2, 'consultor'), ($1, 5, 4, 'consultor')`, [rfn.id]);
 
   // Project 3: ADP - Varejo Gama (Thu biweekly odd)
@@ -105,7 +105,7 @@ async function seed() {
   );
 
   await query(`INSERT INTO allocations (project_id, consultant_id, weekday, role) VALUES
-    ($1, 3, 4, 'líder'),
+    ($1, 3, 4, 'lider'),
     ($1, 7, 4, 'consultor')`, [adp.id]);
 
   // Project 4: EXP - Tech Delta (hot, biweekly even, unresolved)

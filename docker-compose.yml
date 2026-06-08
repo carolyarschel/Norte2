@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_DB: alloc-platform
       POSTGRES_USER: postgres
@@ -38,6 +38,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BACKEND_URL: http://backend:3001
     environment:
       BACKEND_URL: http://backend:3001
       NODE_ENV: production

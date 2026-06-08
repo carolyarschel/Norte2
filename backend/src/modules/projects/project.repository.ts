@@ -364,7 +364,7 @@ export const projectRepo = {
       for (const alloc of allocations) {
         if (pinnedIds.has(alloc.consultant_id)) continue;
         if (!nonPinnedMap.has(alloc.consultant_id)) {
-          nonPinnedMap.set(alloc.consultant_id, { days: [], isLeader: alloc.role === "líder" });
+          nonPinnedMap.set(alloc.consultant_id, { days: [], isLeader: alloc.role === "lider" || alloc.role === "líder" });
         }
         nonPinnedMap.get(alloc.consultant_id)!.days.push(alloc.weekday);
       }

@@ -285,7 +285,7 @@ async function runSimulation(
     for (const d of days) {
       proposed.push({
         consultantId: c.id, consultantName: c.name, weekday: d,
-        role: "líder", slotType: "pinned",
+        role: "lider", slotType: "pinned",
         slotDescription: `${c.name} (líder${slotCadence !== effectiveCadence ? " · " + CADENCE_SHORT[slotCadence] : ""})`,
         cadence: slotCadence,
       });
@@ -336,7 +336,7 @@ async function runSimulation(
       for (const d of days) {
         proposed.push({
           consultantId: c.id, consultantName: c.name, weekday: d,
-          role: "líder", slotType: "level", slotDescription: `Líder ${LEVEL_LABELS[slot.level]}+`,
+          role: "lider", slotType: "level", slotDescription: `Líder ${LEVEL_LABELS[slot.level]}+`,
           cadence: effectiveCadence,
         });
       }

@@ -91,7 +91,7 @@ async function autoAllocatePinnedSlots(
   const dbAllocations: { consultant_id: number; weekday: number; role: string }[] = [];
   for (const slot of withDays) {
     const consultant = await consultantRepo.findById(slot.consultantId);
-    const role = consultant?.is_leader ? "líder" : "consultor";
+    const role = consultant?.is_leader ? "lider" : "consultor";
     for (const day of slot.visitDays.slice(0, slot.daysPerWeek)) {
       dbAllocations.push({ consultant_id: slot.consultantId, weekday: day, role });
     }
